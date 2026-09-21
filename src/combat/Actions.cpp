@@ -972,6 +972,9 @@ Action Actions::CodexAction() {
 
 Action Actions::ExhaustMany(int limit) {
     return {[=] (BattleContext &bc) {
+        if (bc.cards.cardsInHand == 0) {
+            return;
+        }
         bc.inputState = InputState::CARD_SELECT;
         bc.cardSelectInfo.cardSelectTask = CardSelectTask::EXHAUST_MANY;
         bc.cardSelectInfo.pickCount = limit;

@@ -29,6 +29,11 @@ target_include_directories(test PUBLIC include)
 target_link_directories(test PUBLIC json::nlohmann_json)
 target_include_directories(test PUBLIC json/include)
 
+add_executable(exhaust_many_empty_hand_test tests/exhaust_many_empty_hand.cpp ${sts_lightspeed_SOURCES})
+target_include_directories(exhaust_many_empty_hand_test PUBLIC include)
+target_link_directories(exhaust_many_empty_hand_test PUBLIC json::nlohmann_json)
+target_include_directories(exhaust_many_empty_hand_test PUBLIC json/include)
+
 add_executable(small-test apps/small-test.cpp bindings/bindings-util.cpp ${sts_lightspeed_SOURCES})
 target_link_directories(small-test PRIVATE json::nlohmann_json)
 target_include_directories(small-test PUBLIC include)
