@@ -6,6 +6,7 @@
 #define STS_LIGHTSPEED_MONSTER_H
 
 #include <functional>
+#include <algorithm>
 #include <random>
 #include <map>
 #include <game/Random.h>
@@ -58,7 +59,7 @@ namespace sts {
         std::int8_t platedArmor = 0;
         std::int8_t poison = 0;
         std::int8_t regen = 0;
-        std::int8_t shackled = 0;
+        std::int16_t shackled = 0;
         int strength = 0;
         int vulnerable = 0;
         int weak = 0;
@@ -352,7 +353,7 @@ namespace sts {
                 return;
 
             case MonsterStatus::STRENGTH:
-                strength += amount;
+                strength = std::clamp(strength + amount, -999, 999);
                 setHasStatus<s>(true);
                 return;
 
@@ -529,12 +530,12 @@ namespace sts {
                 return;
 
             case MonsterStatus::SHACKLED:
-                shackled += amount;
+                shackled = std::clamp(shackled + amount, -999, 999);
                 setHasStatus<s>(true);
                 return;
 
             case MonsterStatus::STRENGTH:
-                strength += amount;
+                strength = std::clamp(strength + amount, -999, 999);
                 return;
 
             case MS::ANGRY:

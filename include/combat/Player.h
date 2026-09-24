@@ -13,6 +13,7 @@
 #define STS_AI_PLAYER_H
 
 #include <iostream>
+#include <algorithm>
 #include <vector>
 #include <cstdint>
 #include <bitset>
@@ -320,7 +321,7 @@ namespace sts {
                 return;
 
             case PS::STRENGTH:
-                strength += amount;
+                strength = std::clamp(strength + amount, -999, 999);
                 return;
 
             default:
@@ -391,7 +392,7 @@ namespace sts {
         }
 
         if (s == PlayerStatus::STRENGTH) {
-            strength += amount;
+            strength = std::clamp(strength + amount, -999, 999);
             return;
         }
         if (s == PlayerStatus::DEXTERITY) {
