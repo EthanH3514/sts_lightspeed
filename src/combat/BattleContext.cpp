@@ -1263,8 +1263,8 @@ void BattleContext::useSkillCard() {
             break;
 
         case CardId::DARK_SHACKLES:
-            addToBot( Actions::DebuffEnemy<MS::STRENGTH>(t, up ? 15 : 9) );
-            if (monsters.arr[t].hasStatus<MS::ARTIFACT>()) {
+            addToBot( Actions::DebuffEnemy<MS::STRENGTH>(t, up ? -15 : -9) );
+            if (!monsters.arr[t].hasStatus<MS::ARTIFACT>()) {
                 addToBot( Actions::BuffEnemy<MS::SHACKLED>(t, up ? 15 : 9) );
             }
             break;
