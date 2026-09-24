@@ -1123,7 +1123,12 @@ Action Actions::HandOfGreedAction(int idx, int damage, bool upgraded) {
 
 Action Actions::LimitBreakAction() {
     return {[] (BattleContext &bc) {
-        bc.player.buff<PS::STRENGTH>(bc.player.getStatus<PS::STRENGTH>());
+        const int strength = bc.player.getStatus<PS::STRENGTH>();
+        if (strength < 0) {
+            bc.player.debuff<PS::STRENGTH>(strength, false);
+        } else {
+            bc.player.buff<PS::STRENGTH>(strength);
+        }
     }};
 }
 
