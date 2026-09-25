@@ -1339,16 +1339,15 @@ void BattleContext::useSkillCard() {
             break;
 
         case CardId::IMPATIENCE: {
-            bool hasAttack = false;
-            for (int i = 0; i < cards.cardsInHand; ++i) {
-                if (cards.hand[i].getType() == CardType::ATTACK) {
-                    hasAttack = false;
-                    break;
+            const int drawCount = up ? 3 : 2;
+            addToBot({[drawCount](BattleContext &bc) {
+                for (int i = 0; i < bc.cards.cardsInHand; ++i) {
+                    if (bc.cards.hand[i].getType() == CardType::ATTACK) {
+                        return;
+                    }
                 }
-            }
-            if (!hasAttack) {
-                addToBot(Actions::DrawCards(up ? 3 : 2));
-            }
+                bc.addToTop(Actions::DrawCards(drawCount));
+            }});
             break;
         }
 
