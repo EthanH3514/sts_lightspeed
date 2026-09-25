@@ -861,6 +861,13 @@ void BattleContext::playCardQueueItem(CardQueueItem playItem) {
             useCard();
         }
 
+    } else if (item.autoplay && item.triggerOnUse) {
+        // GameActionManager still queues UseCardAction for a rejected autoplay.
+        // Settle its lifecycle without card effects, play callbacks or counters.
+        item.triggerOnUse = false;
+        item.exhaustOnUse |= c.doesExhaust();
+        addToBot(Actions::OnAfterCardUsed());
+        return;
     }
 
     if (!item.triggerOnUse) {
