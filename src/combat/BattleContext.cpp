@@ -2525,7 +2525,8 @@ void BattleContext::playTopCardInDrawPile(int monsterTargetIdx, bool exhausts) {
     item.exhaustOnUse = exhausts;
     item.autoplay = true;
     item.freeToPlay = true; // todo remove the autoplay boolean? added this instead
-    addToTopCard(item);
+    // PlayTopCardAction uses NewQueueCardAction with immediateCard=false.
+    addToBotCard(item);
 }
 
 void BattleContext::moveToHandHelper(CardInstance c) {

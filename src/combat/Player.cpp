@@ -624,7 +624,11 @@ void Player::applyStartOfTurnPowers(BattleContext &bc) {
 
             case PS::MAYHEM:
                 for (int i = 0; i < pair.second; i++) {
-                    bc.addToBot( Actions::PlayTopCard(bc.monsters.getRandomMonsterIdx(bc.cardRandomRng), false) ); // todo fix target
+                    // The start-of-turn wrapper queues the play behind normal draw
+                    // and already queued post-draw effects; choose its target here.
+                    bc.addToBot(Action([](BattleContext &ctx) {
+                        ctx.addToBot(Actions::PlayTopCard(ctx.monsters.getRandomMonsterIdx(ctx.cardRandomRng), false));
+                    }));
                 }
                 break;
 
