@@ -1637,6 +1637,7 @@ void BattleContext::onUseAttackCard() {
     }
 
     if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
+        p.panacheCounter = 5;
         addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
     }
 
@@ -1767,6 +1768,7 @@ void BattleContext::onUseSkillCard() {
     }
 
     if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
+        p.panacheCounter = 5;
         addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
     }
 
@@ -1846,6 +1848,7 @@ void BattleContext::onUsePowerCard() {
     }
 
     if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
+        p.panacheCounter = 5;
         addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
     }
 
@@ -1909,6 +1912,7 @@ void BattleContext::onUseStatusOrCurseCard() {
     }
 
     if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
+        p.panacheCounter = 5;
         addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
     }
 

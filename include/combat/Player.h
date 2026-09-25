@@ -349,6 +349,9 @@ namespace sts {
         if (s == PS::COMBUST) {
             ++combustHpLoss;
         }
+        if (s == PS::PANACHE && !hasStatus<s>()) {
+            panacheCounter = 5;
+        }
 
         if (hasStatus<s>()) {
             statusMap[s] += amount;
