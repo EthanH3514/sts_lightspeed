@@ -347,12 +347,12 @@ void Player::wouldDie(BattleContext &bc) {
 }
 
 void Player::applyEndOfTurnPowers(BattleContext &bc) {
-    if (bomb1) {
-        bc.addToBot( Actions::DamageAllEnemy(bomb1) );
+    for (const int damage : bomb1) {
+        bc.addToBot(Actions::DamageAllEnemy(damage));
     }
-    bomb1 = bomb2;
-    bomb2 = bomb3;
-    bomb3 = 0;
+    bomb1 = std::move(bomb2);
+    bomb2 = std::move(bomb3);
+    bomb3.clear();
 
     for (auto pair : statusMap) {
         if (!hasStatusRuntime(pair.first)) {
@@ -822,12 +822,14 @@ namespace sts {
             << s << "devaFormEnergyPerTurn: " << static_cast<int>(p.devaFormEnergyPerTurn)
             << s << "echoFormCardsDoubled: " << static_cast<int>(p.echoFormCardsDoubled)
             << s << "panacheCounter: " << static_cast<int>(p.panacheCounter)
-            << s << "TheBomb: { 1=" << static_cast<int>(p.bomb1)
-                << ", 2=" << static_cast<int>(p.bomb2)
-                << ", 3=" << static_cast<int>(p.bomb3)
-                << " }"
+            << s << "TheBomb (remaining 1/2/3): ";
+        for (const auto *wave : {&p.bomb1, &p.bomb2, &p.bomb3}) {
+            os << "[";
+            for (const int damage : *wave) { os << damage << ","; }
+            os << "] ";
+        }
 
-            << "\n\t" << "Misc: "
+        os << "\n\t" << "Misc: "
             << "" << "cardsPlayedThisTurn: " << static_cast<int>(p.cardsPlayedThisTurn)
             << s << "attacksPlayedThisTurn: " << static_cast<int>(p.attacksPlayedThisTurn)
             << s << "skillsPlayedThisTurn: " << static_cast<int>(p.skillsPlayedThisTurn);
