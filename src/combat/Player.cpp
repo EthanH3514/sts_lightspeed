@@ -8,6 +8,7 @@
 #include <combat/BattleContext.h>
 #include <combat/Actions.h>
 #include "combat/Player.h"
+#include "game/Game.h"
 
 using namespace sts;
 
@@ -619,7 +620,15 @@ void Player::applyStartOfTurnPowers(BattleContext &bc) {
                 break;
 
             case PS::MAGNETISM:
-//                bc.addToBot( Actions::SetState(InputState::CREATE_RANDOM_CARD_IN_HAND_COLORLESS, pair.second) );
+                if (!bc.monsters.areMonstersBasicallyDead()) {
+                    std::vector<CardInstance> generated;
+                    for (int i = 0; i < pair.second; ++i) {
+                        generated.emplace_back(getTrulyRandomColorlessCardInCombat(bc.cardRandomRng));
+                    }
+                    // Select identities at the trigger; queued insertion precedes
+                    // normal turn draws and does not invoke draw callbacks.
+                    bc.addToBot(Actions::MakeTempCardsInHand(generated));
+                }
                 break;
 
             case PS::MAYHEM:
