@@ -321,9 +321,8 @@ void BattleSimulator::printCardSelectActions(std::ostream &os) const {
 
         case CardSelectTask::FORETHOUGHT: {
             if (bc->cardSelectInfo.canPickAnyNumber) {
-                // todo unsupported
-                assert(false);
-                os << "Forethought: Choose a card to put on bottom of your draw pile.\n";
+                os << "Forethought: Choose any number of cards for the draw-pile bottom. "
+                      "Use original hand indices in selection order, or none.\n";
             } else {
                 os << "Forethought: Choose card to put on bottom of your draw pile.\n";
             }
@@ -452,7 +451,7 @@ void BattleSimulator::takeCardSelectAction(const std::string &action) {
 
         case CardSelectTask::FORETHOUGHT:
             if (bc->cardSelectInfo.canPickAnyNumber) {
-
+                bc->chooseForethoughtCards(getIdxListFromString(action));
             } else {
                 bc->chooseForethoughtCard(std::stoi(action));
             }
