@@ -149,6 +149,7 @@ namespace sts {
         "TIME_WARP",
 
         "INVINCIBLE",
+        "REACTIVE",
         "SHARP_HIDE",
 
         "ASLEEP",
@@ -156,7 +157,6 @@ namespace sts {
         "MINION",
         "MINION_LEADER",
         "PAINFUL_STABS",
-        "REACTIVE",
         "REGROW",
         "SHIFTING",
         "STASIS",
