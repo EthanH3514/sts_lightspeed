@@ -248,7 +248,10 @@ Action Actions::MakeTempCardInDrawPile(const CardInstance &c, int amount, bool s
                 const int idx = bc.cards.drawPile.empty() ? 0 : bc.cardRandomRng.random(static_cast<int>(bc.cards.drawPile.size()-1));
                 bc.cards.createTempCardInDrawPile(idx, c);
             }
-            // todo else
+            else {
+                // Non-random generation places each new identity on top.
+                bc.cards.createTempCardInDrawPile(static_cast<int>(bc.cards.drawPile.size()), c);
+            }
         }
     }};
 }

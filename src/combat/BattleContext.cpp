@@ -2102,13 +2102,18 @@ void BattleContext::callEndOfTurnActions() {
         addToBot(Actions::TriggerEndOfTurnOrbsAction());
     }
 
-    // todo for cards in hand call triggerOnEndOfTurnForPlayingCard
+    // Cards register end-hand callbacks before the ordinary discard phase.
 
     for (int i = 0; i < cards.cardsInHand; ++i) {
 
         const auto &c = cards.hand[i];
 
         switch (c.id) {
+            case CardId::PRIDE:
+                // Capture stat-equivalent data now; the queued action creates
+                // a fresh identity on top, without playing or exhausting it.
+                addToBot(Actions::MakeTempCardInDrawPile(c, 1, false));
+                break;
             case CardId::BURN:
             case CardId::DECAY:
             case CardId::DOUBT:

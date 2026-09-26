@@ -490,6 +490,7 @@ namespace sts {
             case CardId::DRAMATIC_ENTRANCE:
             case CardId::MIND_BLAST:
             case CardId::WRITHE:
+            case CardId::PRIDE:
                 return true;
 
             case CardId::BRUTALITY:

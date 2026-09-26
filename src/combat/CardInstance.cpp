@@ -327,7 +327,7 @@ bool CardInstance::canUse(const BattleContext &bc, int target, const bool inAuto
             break;
 
         case CardType::CURSE:
-            if (!bc.player.hasRelic<RelicId::BLUE_CANDLE>()) {
+            if (costForTurn < -1 && !bc.player.hasRelic<RelicId::BLUE_CANDLE>()) {
                 return false;
             }
             break;
