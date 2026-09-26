@@ -458,8 +458,11 @@ void CardManager::draw(BattleContext &bc, int amount) {
                 }
             }
             if (c.getId() == CardId::VOID) {
-                // game adds action to bottom of the queue but I think it is ok to do directly
-                bc.player.energy = std::max(0, bc.player.energy-1);
+                // Void.triggerWhenDrawn queues LoseEnergyAction after existing
+                // effects (for example Sundial's gain from the same shuffle).
+                bc.addToBot({[](BattleContext &context) {
+                    context.player.energy = std::max(0, context.player.energy - 1);
+                }});
             }
 
         } else if (c.getType() == CardType::CURSE) {
