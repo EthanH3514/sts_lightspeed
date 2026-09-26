@@ -100,14 +100,19 @@ pybind::dict combatCard(const CardInstance &card, const BattleContext *battle = 
 
 pybind::list playerPowers(const Player &player) {
     pybind::list result;
-    // Duplicate IDs are intentional: Bombs are independent public records.
-    for (const auto &bomb : public_state::pendingBombs(player)) {
-        pybind::dict power;
-        power["id"] = "THE_BOMB";
-        power["amount"] = bomb.remainingTurns;
-        power["damage"] = bomb.damage;
-        result.append(power);
-    }
+    // Keep Bomb records on their acquired side of the single Combust instance.
+    const auto bombs = public_state::pendingBombs(player);
+    const auto appendBombs = [&](bool beforeCombust) {
+        for (const auto &bomb : bombs) {
+            if (bomb.beforeCombust != beforeCombust) continue;
+            pybind::dict power;
+            power["id"] = "THE_BOMB";
+            power["amount"] = bomb.remainingTurns;
+            power["damage"] = bomb.damage;
+            result.append(power);
+        }
+    };
+    appendBombs(true);
     for (const auto &entry : player.statusMap) {
         auto status = entry.first;
         auto amount = entry.second;
@@ -141,6 +146,7 @@ pybind::list playerPowers(const Player &player) {
             power["damage"] = amount;
         }
         result.append(power);
+        if (status == PS::COMBUST) appendBombs(false);
     }
     const std::pair<PlayerStatus, int> direct[] = {
         {PlayerStatus::ARTIFACT, player.artifact},
