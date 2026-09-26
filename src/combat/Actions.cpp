@@ -1059,7 +1059,6 @@ Action Actions::EnlightenmentAction(bool upgraded) {
                 c.costForTurn = 1;
             }
             if (upgraded && c.cost > 1) {
-                c.costForTurn = 1;
                 c.cost = 1;
             }
         }
