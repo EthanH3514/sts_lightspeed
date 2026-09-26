@@ -354,6 +354,9 @@ namespace sts {
         if (s == PS::COMBUST) {
             ++combustHpLoss;
         }
+        if (s == PS::PANACHE && !hasStatus<s>()) {
+            panacheCounter = 5;
+        }
 
         if (!hasStatus<s>()) {
             if (s == PS::FEEL_NO_PAIN) {
