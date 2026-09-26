@@ -5,6 +5,7 @@
 #include "combat/BattleContext.h"
 #include "game/GameContext.h"
 #include "game/Game.h"
+#include <stdexcept>
 
 using namespace sts;
 
@@ -3059,6 +3060,24 @@ void BattleContext::chooseExhumeCard(int exhaustIdx) {
     cards.notifyAddCardToCombat(c);
 
     moveToHandHelper(c);
+}
+
+void BattleContext::chooseForethoughtCards(const fixed_list<int,10> &handIdxs) {
+    std::array<bool,10> selected{};
+    for (int idx : handIdxs) {
+        if (idx < 0 || idx >= cards.cardsInHand || selected[idx]) {
+            throw std::invalid_argument("Forethought requires distinct original hand indices");
+        }
+        selected[idx] = true;
+    }
+    // Preserve selection order while adjusting for earlier removals.
+    for (int i = 0; i < handIdxs.size(); ++i) {
+        int currentIdx = handIdxs[i];
+        for (int j = 0; j < i; ++j) {
+            if (handIdxs[j] < handIdxs[i]) --currentIdx;
+        }
+        chooseForethoughtCard(currentIdx);
+    }
 }
 
 void BattleContext::chooseForethoughtCard(int handIdx) {
