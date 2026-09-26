@@ -16,6 +16,7 @@
 
 #include "sim/ConsoleSimulator.h"
 #include "sim/PublicCombatResampling.h"
+#include "sim/PublicBombState.h"
 #include "sim/search/ScumSearchAgent2.h"
 #include "sim/SimHelpers.h"
 #include "sim/PrintHelpers.h"
@@ -99,6 +100,14 @@ pybind::dict combatCard(const CardInstance &card, const BattleContext *battle = 
 
 pybind::list playerPowers(const Player &player) {
     pybind::list result;
+    // Duplicate IDs are intentional: Bombs are independent public records.
+    for (const auto &bomb : public_state::pendingBombs(player)) {
+        pybind::dict power;
+        power["id"] = "THE_BOMB";
+        power["amount"] = bomb.remainingTurns;
+        power["damage"] = bomb.damage;
+        result.append(power);
+    }
     for (const auto &entry : player.statusMap) {
         auto status = entry.first;
         auto amount = entry.second;
