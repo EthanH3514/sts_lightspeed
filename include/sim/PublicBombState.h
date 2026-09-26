@@ -9,18 +9,14 @@ struct PendingBomb {
     int damage;
     bool beforeCombust;
 };
-
-// Preserve packet order and the acquired position relative to Combust only.
-// This is not a general ordering model for all end-of-turn powers.
+// Compatibility projection only: all authoritative state/order lives in the registry.
 inline std::vector<PendingBomb> pendingBombs(const Player &player) {
     std::vector<PendingBomb> result;
-    int remaining = 1;
-    const std::size_t prefixes[] = {player.bomb1BeforeCombust, player.bomb2BeforeCombust, player.bomb3BeforeCombust};
-    for (const auto *bucket : {&player.bomb1, &player.bomb2, &player.bomb3}) {
-        for (std::size_t i = 0; i < bucket->size(); ++i) {
-            result.push_back({remaining, (*bucket)[i], !player.hasStatus<PS::COMBUST>() || i < prefixes[remaining - 1]});
-        }
-        ++remaining;
+    bool seenCombust = false;
+    for (const auto &power : player.powerInstances.ordered()) {
+        if (power.type == PlayerStatus::COMBUST) seenCombust = true;
+        if (power.type == PlayerStatus::THE_BOMB)
+            result.push_back({power.remainingTurns, power.payload, !seenCombust});
     }
     return result;
 }

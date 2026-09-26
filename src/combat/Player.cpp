@@ -353,31 +353,52 @@ void Player::wouldDie(BattleContext &bc) {
 }
 
 void Player::applyEndOfTurnPowers(BattleContext &bc) {
-    const auto beforeCombust = hasStatus<PS::COMBUST>()
-            ? std::min(bomb1BeforeCombust, bomb1.size()) : bomb1.size();
-    for (std::size_t i = 0; i < beforeCombust; ++i) {
-        bc.addToBot(Actions::DamageAllEnemy(bomb1[i]));
-    }
+    // Ordered reviewed callbacks retain legacy anchors relative to unmigrated powers.
+    const auto callbacks = powerInstances.ordered(PowerPhase::End);
+    std::size_t nextCallback = 0;
+    const auto invoke = [&](const PowerInstance &power) {
+        switch (power.type) {
+            case PS::THE_BOMB:
+                if (power.remainingTurns == 1)
+                    bc.addToBot(Actions::DamageAllEnemy(power.payload));
+                break;
+            case PS::COMBUST:
+                if (!bc.monsters.areMonstersBasicallyDead()) {
+                    bc.addToBot(Actions::PlayerLoseHp(combustHpLoss, true));
+                    bc.addToBot(Actions::DamageAllEnemy(getStatus<PS::COMBUST>()));
+                }
+                break;
+            default: break;
+        }
+    };
+    const auto drainIndependent = [&]() {
+        while (nextCallback < callbacks.size() &&
+               reviewedPowerSpec(callbacks[nextCallback].type)->independent)
+            invoke(callbacks[nextCallback++]);
+    };
+    drainIndependent();
 
     for (auto pair : statusMap) {
         if (!hasStatusRuntime(pair.first)) {
             continue;
         }
 
+        if (const auto *spec = reviewedPowerSpec(pair.first);
+                spec && spec->phase == PowerPhase::End) {
+            const auto anchor = std::find_if(callbacks.begin(), callbacks.end(),
+                    [&](const auto &power) { return power.type == pair.first; });
+            if (anchor != callbacks.end()) {
+                const auto stop = static_cast<std::size_t>(anchor - callbacks.begin());
+                while (nextCallback <= stop) invoke(callbacks[nextCallback++]);
+            }
+            drainIndependent();
+            continue;
+        }
         switch (pair.first) {
             case PS::BURST:
                 bc.addToBot(Actions::RemoveStatus<PS::BURST>());
                 break;
 
-            case PS::COMBUST:
-                if (!bc.monsters.areMonstersBasicallyDead()) {
-                    bc.addToBot(Actions::PlayerLoseHp(combustHpLoss, true)); // todo combust doesnt stack hp loss correctly
-                    bc.addToBot(Actions::DamageAllEnemy(pair.second));
-                }
-                for (std::size_t i = beforeCombust; i < bomb1.size(); ++i) {
-                    bc.addToBot(Actions::DamageAllEnemy(bomb1[i]));
-                }
-                break;
 
             case PS::CONSTRICTED:
                 bc.addToBot(Actions::DamagePlayer(pair.second));
@@ -445,12 +466,7 @@ void Player::applyEndOfTurnPowers(BattleContext &bc) {
                 break;
         }
     }
-    bomb1 = std::move(bomb2);
-    bomb2 = std::move(bomb3);
-    bomb3.clear();
-    bomb1BeforeCombust = bomb2BeforeCombust;
-    bomb2BeforeCombust = bomb3BeforeCombust;
-    bomb3BeforeCombust = 0;
+    powerInstances.tick(PowerPhase::End);
 }
 
 void Player::applyAtEndOfRoundPowers() {
@@ -848,11 +864,11 @@ namespace sts {
             << s << "devaFormEnergyPerTurn: " << static_cast<int>(p.devaFormEnergyPerTurn)
             << s << "echoFormCardsDoubled: " << static_cast<int>(p.echoFormCardsDoubled)
             << s << "panacheCounter: " << static_cast<int>(p.panacheCounter)
-            << s << "TheBomb (remaining 1/2/3): ";
-        for (const auto *wave : {&p.bomb1, &p.bomb2, &p.bomb3}) {
-            os << "[";
-            for (const int damage : *wave) { os << damage << ","; }
-            os << "] ";
+            << s << "Ordered power instances: ";
+        for (const auto &power : p.powerInstances.ordered()) {
+            os << "[" << static_cast<int>(power.type) << ":" << power.priority
+               << ":" << power.acquired << ":" << power.remainingTurns
+               << ":" << power.payload << "] ";
         }
 
         os << "\n\t" << "Misc: "

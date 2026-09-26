@@ -22,6 +22,7 @@
 #include <constants/CharacterClasses.h>
 #include <constants/Relics.h>
 #include <constants/PlayerStatusEffects.h>
+#include "combat/PowerInstances.h"
 
 // powers that use justApplied:
 // Vulnerable, requires isSourceMonster and actionManager turn has ended
@@ -57,11 +58,9 @@ namespace sts {
         std::uint32_t justAppliedBits = 0;
         std::uint64_t statusBits0 = 0;
         std::uint32_t statusBits1 = 0;
-        // Equal-priority exhaust powers retain their relative acquisition order.
-        bool feelNoPainBeforeDarkEmbrace = false;
+        // One lifecycle/order registry for the reviewed callback families.
+        PowerInstances powerInstances;
         std::map<PlayerStatus, std::int16_t> statusMap;
-        // Evolve and Fire Breathing have equal priority; acquisition order matters.
-        bool fireBreathingBeforeEvolve = false;
 
         std::uint64_t relicBits0 = 0;
         std::uint64_t relicBits1 = 0;
@@ -91,14 +90,6 @@ namespace sts {
         int16_t lastAttackUnblockedDamage = 0;
         int16_t timesDamagedThisCombat = 0;
 
-        // Each Bomb is an independent damage packet, grouped by remaining turns.
-        std::vector<int> bomb1;
-        std::vector<int> bomb2;
-        std::vector<int> bomb3;
-        // Per-bucket prefix acquired before the current Combust instance.
-        std::size_t bomb1BeforeCombust = 0;
-        std::size_t bomb2BeforeCombust = 0;
-        std::size_t bomb3BeforeCombust = 0;
 
         template <RelicId r> void setHasRelic(bool value);
         template <PlayerStatus> void setHasStatus(bool value);
@@ -254,6 +245,8 @@ namespace sts {
         }
 
         //static_assert(((int)s) < 64); // did we add too many status effects
+        if (value) powerInstances.activate(s);
+        else powerInstances.remove(s);
         int idx = static_cast<int>(s);
         if (value) {
             if (idx < 64) {
@@ -338,7 +331,7 @@ namespace sts {
         }
 
         if (s == PS::THE_BOMB) {
-            bomb3.push_back(amount);
+            powerInstances.add(s, 3, amount);
             return;
         }
 
@@ -357,32 +350,15 @@ namespace sts {
         }
 
         if (s == PS::COMBUST) {
-            if (!hasStatus<PS::COMBUST>()) {
-                bomb1BeforeCombust = bomb1.size();
-                bomb2BeforeCombust = bomb2.size();
-                bomb3BeforeCombust = bomb3.size();
-            }
             ++combustHpLoss;
         }
         if (s == PS::PANACHE && !hasStatus<s>()) {
             panacheCounter = 5;
         }
 
-        if (!hasStatus<s>()) {
-            if (s == PS::FEEL_NO_PAIN) {
-                feelNoPainBeforeDarkEmbrace = !hasStatus<PS::DARK_EMBRACE>();
-            } else if (s == PS::DARK_EMBRACE) {
-                feelNoPainBeforeDarkEmbrace = hasStatus<PS::FEEL_NO_PAIN>();
-            }
-        }
         if (hasStatus<s>()) {
             statusMap[s] += amount;
         } else {
-            if (s == PS::EVOLVE) {
-                fireBreathingBeforeEvolve = hasStatus<PS::FIRE_BREATHING>();
-            } else if (s == PS::FIRE_BREATHING) {
-                fireBreathingBeforeEvolve = !hasStatus<PS::EVOLVE>();
-            }
             setHasStatus<s>(true);
             statusMap[s] = amount;
         }

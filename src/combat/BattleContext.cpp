@@ -772,9 +772,7 @@ void BattleContext::executeActions() {
             bool hasDamageWithoutCards = player.hasStatus<PS::OMEGA>() ||
                     player.hasStatus<PS::THORNS>() ||
                     player.hasStatus<PS::MAGNETISM>() ||
-                    !player.bomb1.empty() ||
-                    !player.bomb2.empty() ||
-                    !player.bomb3.empty();
+                    player.powerInstances.has(PS::THE_BOMB);
 
             if (!hasDamageWithoutCards && monsters.arr[0].id != MonsterId::TRANSIENT) {
                 outcome = Outcome::PLAYER_LOSS;
@@ -2855,15 +2853,16 @@ void BattleContext::triggerAndMoveToExhaustPile(CardInstance c) {
         addToBot(Actions::MakeTempCardInHand(id));
     }
 
-    if (player.hasStatus<PS::FEEL_NO_PAIN>() && player.feelNoPainBeforeDarkEmbrace) {
-        addToBot(Actions::GainBlock(player.getStatus<PS::FEEL_NO_PAIN>()));
-    }
-    if (player.hasStatus<PS::DARK_EMBRACE>()) {
-        addToBot(Actions::DrawCards(player.getStatus<PS::DARK_EMBRACE>()));
-    }
-
-    if (player.hasStatus<PS::FEEL_NO_PAIN>() && !player.feelNoPainBeforeDarkEmbrace) {
-        addToBot(Actions::GainBlock(player.getStatus<PS::FEEL_NO_PAIN>()));
+    for (const auto &power : player.powerInstances.ordered(PowerPhase::Exhaust)) {
+        switch (power.type) {
+            case PS::FEEL_NO_PAIN:
+                addToBot(Actions::GainBlock(player.getStatus<PS::FEEL_NO_PAIN>()));
+                break;
+            case PS::DARK_EMBRACE:
+                addToBot(Actions::DrawCards(player.getStatus<PS::DARK_EMBRACE>()));
+                break;
+            default: break;
+        }
     }
 
     if (c.getId() == CardId::NECRONOMICURSE) {

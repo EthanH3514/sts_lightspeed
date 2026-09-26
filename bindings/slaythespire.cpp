@@ -100,43 +100,19 @@ pybind::dict combatCard(const CardInstance &card, const BattleContext *battle = 
 
 pybind::list playerPowers(const Player &player) {
     pybind::list result;
-    // Keep Bomb records on their acquired side of the single Combust instance.
-    const auto bombs = public_state::pendingBombs(player);
-    const auto appendBombs = [&](bool beforeCombust) {
-        for (const auto &bomb : bombs) {
-            if (bomb.beforeCombust != beforeCombust) continue;
-            pybind::dict power;
-            power["id"] = "THE_BOMB";
-            power["amount"] = bomb.remainingTurns;
-            power["damage"] = bomb.damage;
-            result.append(power);
-        }
-    };
-    appendBombs(true);
+    // Export the same ordered instances that supply the reviewed callbacks.
+    for (const auto &instance : player.powerInstances.ordered()) {
+        pybind::dict power;
+        power["id"] = playerStatusEnumStrings[static_cast<int>(instance.type)];
+        power["amount"] = instance.type == PS::THE_BOMB
+                ? instance.remainingTurns : player.getStatusRuntime(instance.type);
+        if (instance.type == PS::THE_BOMB) power["damage"] = instance.payload;
+        result.append(power);
+    }
     for (const auto &entry : player.statusMap) {
-        auto status = entry.first;
-        auto amount = entry.second;
-        // Preserve this public callback order, not the enum-sorted map order.
-        if (player.fireBreathingBeforeEvolve && player.hasStatus<PS::EVOLVE>() &&
-            player.hasStatus<PS::FIRE_BREATHING>()) {
-            if (status == PS::EVOLVE) {
-                status = PS::FIRE_BREATHING;
-                amount = player.getStatus<PS::FIRE_BREATHING>();
-            } else if (status == PS::FIRE_BREATHING) {
-                status = PS::EVOLVE;
-                amount = player.getStatus<PS::EVOLVE>();
-            }
-        }
-        if (player.feelNoPainBeforeDarkEmbrace && player.hasStatus<PS::DARK_EMBRACE>() &&
-            player.hasStatus<PS::FEEL_NO_PAIN>()) {
-            if (status == PS::DARK_EMBRACE) {
-                status = PS::FEEL_NO_PAIN;
-                amount = player.getStatus<PS::FEEL_NO_PAIN>();
-            } else if (status == PS::FEEL_NO_PAIN) {
-                status = PS::DARK_EMBRACE;
-                amount = player.getStatus<PS::DARK_EMBRACE>();
-            }
-        }
+        const auto status = entry.first;
+        const auto amount = entry.second;
+        if (reviewedPowerSpec(status)) continue;
         pybind::dict power;
         power["id"] = playerStatusEnumStrings[static_cast<int>(status)];
         power["amount"] = amount;
@@ -146,7 +122,6 @@ pybind::list playerPowers(const Player &player) {
             power["damage"] = amount;
         }
         result.append(power);
-        if (status == PS::COMBUST) appendBombs(false);
     }
     const std::pair<PlayerStatus, int> direct[] = {
         {PlayerStatus::ARTIFACT, player.artifact},

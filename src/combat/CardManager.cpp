@@ -423,14 +423,16 @@ void CardManager::draw(BattleContext &bc, int amount) {
             }
 
         } else if (c.getType() == CardType::STATUS) {
-            if (fireBreathing && bc.player.fireBreathingBeforeEvolve) {
-                bc.addToBot( Actions::DamageAllEnemy(fireBreathing) );
-            }
-            if (evolve) {
-                bc.addToBot( Actions::DrawCards(evolve) );
-            }
-            if (fireBreathing && !bc.player.fireBreathingBeforeEvolve) {
-                bc.addToBot( Actions::DamageAllEnemy(fireBreathing) );
+            for (const auto &power : bc.player.powerInstances.ordered(PowerPhase::StatusDraw)) {
+                switch (power.type) {
+                    case PS::FIRE_BREATHING:
+                        if (fireBreathing) bc.addToBot(Actions::DamageAllEnemy(fireBreathing));
+                        break;
+                    case PS::EVOLVE:
+                        if (evolve) bc.addToBot(Actions::DrawCards(evolve));
+                        break;
+                    default: break;
+                }
             }
             if (c.getId() == CardId::VOID) {
                 // game adds action to bottom of the queue but I think it is ok to do directly
