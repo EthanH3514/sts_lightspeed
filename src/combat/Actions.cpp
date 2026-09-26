@@ -1109,7 +1109,7 @@ Action Actions::HandOfGreedAction(int idx, int damage, bool upgraded) {
         if (m.isDeadOrEscaped()) {
             return;
         }
-        bc.monsters.arr[idx].damage(bc, damage);
+        bc.monsters.arr[idx].attacked(bc, damage);
 
         const bool effectTriggered = !m.hasStatus<MS::MINION>()
                 && !m.isAlive()
