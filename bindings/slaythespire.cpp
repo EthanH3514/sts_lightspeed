@@ -167,6 +167,9 @@ pybind::dict battleState(const BattleContext &battle) {
     if (battle.inputState == InputState::CARD_SELECT) {
         result["card_select_task"] = cardSelectTaskStrings[
             static_cast<int>(battle.cardSelectInfo.cardSelectTask)];
+        if (battle.cardSelectInfo.cardSelectTask == CardSelectTask::EXHAUST_MANY) {
+            result["selection_max_count"] = battle.cardSelectInfo.pickCount;
+        }
         if (battle.cardSelectInfo.cardSelectTask == CardSelectTask::DISCOVERY) {
             pybind::list candidates;
             for (const auto id : battle.cardSelectInfo.cards) {
