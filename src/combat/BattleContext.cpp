@@ -770,6 +770,7 @@ void BattleContext::executeActions() {
         if (cards.cardsInHand + cards.discardPile.size() + cards.drawPile.size() == 0) {
             bool hasDamageWithoutCards = player.hasStatus<PS::OMEGA>() ||
                     player.hasStatus<PS::THORNS>() ||
+                    player.hasStatus<PS::MAGNETISM>() ||
                     player.bomb1 ||
                     player.bomb2 ||
                     player.bomb3;
