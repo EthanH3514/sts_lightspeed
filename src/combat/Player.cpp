@@ -159,7 +159,7 @@ void Player::heal(int amount) {
     }
 
     if (hasRelic<RelicId::MAGIC_FLOWER>()) {
-        amount = amount * 3 / 2;
+        amount = (amount * 3 + 1) / 2;
     }
 
     bool wasBloodied = curHp <= maxHp/2;
@@ -167,7 +167,7 @@ void Player::heal(int amount) {
     curHp = std::min(static_cast<int>(maxHp), curHp + amount);
 
     if (wasBloodied && curHp > maxHp/2 && hasRelic<RelicId::RED_SKULL>()) {
-        debuff<PS::STRENGTH>(3);
+        debuff<PS::STRENGTH>(-3);
     }
 }
 
@@ -259,6 +259,11 @@ void Player::attacked(BattleContext &bc, int enemyIdx, int calculatedDamage) {
 }
 
 void Player::loseHp(BattleContext &bc, int amount, bool selfDamage) {
+    if (amount > 0 && hasStatus<PS::BUFFER>()) {
+        decrementStatus<PS::BUFFER>();
+        return;
+    }
+
     if (hasStatus<PS::INTANGIBLE>()) {
         amount = 1;
     }
