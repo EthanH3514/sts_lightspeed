@@ -641,7 +641,7 @@ Action Actions::ViolenceAction(int count) { // todo a faster algorithm for inser
         int i = 0;
         for (; i < count; ++i) {
             if (attackIdxList.size()-i <= 0) {
-                return;
+                break;
             }
 
             java::Collections::shuffle(attackIdxList.begin()+i, attackIdxList.end(), java::Random(bc.shuffleRng.randomLong()));
