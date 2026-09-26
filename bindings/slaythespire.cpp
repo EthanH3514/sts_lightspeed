@@ -107,6 +107,7 @@ pybind::list playerPowers(const Player &player) {
         power["amount"] = instance.type == PS::THE_BOMB
                 ? instance.remainingTurns : player.getStatusRuntime(instance.type);
         if (instance.type == PS::THE_BOMB) power["damage"] = instance.payload;
+        if (instance.type == PS::COMBUST) power["hp_loss"] = static_cast<int>(player.combustHpLoss);
         result.append(power);
     }
     for (const auto &entry : player.statusMap) {
@@ -160,6 +161,9 @@ pybind::list monsterPowers(const Monster &monster) {
 pybind::dict battleState(const BattleContext &battle) {
     pybind::dict result;
     result["turn"] = battle.turn;
+    result["bomb_state_schema"] = public_state::bombStateSchema;
+    result["powers_complete"] = public_state::powersComplete(battle.player);
+    result["effects_resolved"] = public_state::effectsResolved(battle);
     result["times_damaged"] = battle.player.timesDamagedThisCombat;
     result["public_known_bottom_ids"] = battle.cards.publicKnownBottomIds;
     result["bottom_knowledge_tracked"] = true;
