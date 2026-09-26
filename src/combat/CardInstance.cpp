@@ -169,7 +169,7 @@ void CardInstance::upgrade() {
         // TODO(dmz) is this logic right?
         int newcost = getEnergyCost(id, true);
         if (getEnergyCost(id, false) != newcost) {
-            cost = costForTurn = newcost;
+            upgradeBaseCost(newcost);
         }
     }
 }
