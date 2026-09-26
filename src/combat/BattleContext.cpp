@@ -3022,6 +3022,10 @@ void BattleContext::chooseDiscardToHandCard(int discardIdx, bool forZeroCost) {
 void BattleContext::chooseDiscoveryCard(CardId id) {
     const auto discoveryAmount = cardSelectInfo.data0;
     CardInstance c(id);
+    // BloodForBlood.makeCopy inherits prior combat HP-loss events.
+    if (id == CardId::BLOOD_FOR_BLOOD) {
+        c.updateCost(-player.timesDamagedThisCombat);
+    }
     c.setCostForTurn(0);
 
     for (int i = 0; i < discoveryAmount; ++i) {
