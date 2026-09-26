@@ -3085,7 +3085,12 @@ void BattleContext::chooseForethoughtCard(int handIdx) {
         cards.hand[handIdx].freeToPlayOnce = true;
     }
 
+    auto knownBottom = cards.publicKnownBottomIds;
+    const bool uncertain = cards.publicBottomOrderUncertain;
+    knownBottom.insert(knownBottom.begin(), cards.hand[handIdx].uniqueId);
     cards.insertToDrawPile(0, cards.hand[handIdx]);
+    cards.publicKnownBottomIds = std::move(knownBottom);
+    cards.publicBottomOrderUncertain = uncertain;
     cards.removeFromHandAtIdx(handIdx);
 }
 

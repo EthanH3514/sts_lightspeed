@@ -40,6 +40,9 @@ namespace sts {
         std::vector<CardInstance> discardPile;
         std::vector<CardInstance> exhaustPile;
 #endif
+        // Public knowledge from selected bottom placements; bottom-first IDs.
+        std::vector<int> publicKnownBottomIds;
+        bool publicBottomOrderUncertain = false;
         int handNormalityCount = 0;
         int handPainCount = 0;
         int strikeCount = 0;

@@ -78,6 +78,9 @@ pybind::dict combatCard(const CardInstance &card, const BattleContext *battle = 
     pybind::dict result;
     result["id"] = getCardEnumName(card.getId());
     result["cost"] = card.costForTurn;
+    result["base_cost"] = card.cost;
+    result["cost_for_turn"] = card.costForTurn;
+    result["free_to_play_once"] = card.freeToPlayOnce;
     result["upgrades"] = card.getUpgradeCount();
     result["type"] = cardTypeStrings[static_cast<int>(card.getType())];
     result["has_target"] = card.requiresTarget();
@@ -168,10 +171,16 @@ pybind::dict battleState(const BattleContext &battle) {
     pybind::dict result;
     result["turn"] = battle.turn;
     result["times_damaged"] = battle.player.timesDamagedThisCombat;
+    result["public_known_bottom_ids"] = battle.cards.publicKnownBottomIds;
+    result["bottom_knowledge_tracked"] = true;
+    result["bottom_order_uncertain"] = battle.cards.publicBottomOrderUncertain;
     result["input_state"] = inputStateName(battle.inputState);
     if (battle.inputState == InputState::CARD_SELECT) {
         result["card_select_task"] = cardSelectTaskStrings[
             static_cast<int>(battle.cardSelectInfo.cardSelectTask)];
+        if (battle.cardSelectInfo.cardSelectTask == CardSelectTask::FORETHOUGHT) {
+            result["selection_any_number"] = battle.cardSelectInfo.canPickAnyNumber;
+        }
         if (battle.cardSelectInfo.cardSelectTask == CardSelectTask::EXHAUST_MANY) {
             result["selection_max_count"] = battle.cardSelectInfo.pickCount;
         }

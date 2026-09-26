@@ -85,6 +85,8 @@ void CardManager::createDeckCardInstanceInDrawPile(const Card &card, int deckIdx
 }
 
 void CardManager::createTempCardInDrawPile(int idx, CardInstance c) {
+    if (!publicKnownBottomIds.empty()) publicBottomOrderUncertain = true;
+    publicKnownBottomIds.clear();
 #ifdef sts_asserts
     if (c.getId() == CardId::INVALID) {
         std::cerr << *g_debug_bc << '\n';
@@ -186,6 +188,8 @@ void CardManager::moveToExhaustPile(const CardInstance &c) {
 
 
 void CardManager::insertToDrawPile(int drawPileIdx, const CardInstance &c) {
+    if (!publicKnownBottomIds.empty()) publicBottomOrderUncertain = true;
+    publicKnownBottomIds.clear();
 #ifdef sts_asserts
     if (c.getId() == CardId::INVALID) {
         std::cerr << *g_debug_bc << '\n';
@@ -331,6 +335,8 @@ void CardManager::notifyAddToDrawPile(const CardInstance &c) {
 }
 
 void CardManager::notifyRemoveFromDrawPile(const CardInstance &c) {
+    publicKnownBottomIds.erase(std::remove(publicKnownBottomIds.begin(),
+        publicKnownBottomIds.end(), c.uniqueId), publicKnownBottomIds.end());
     if (c.isBloodCard()) {
         --drawPileBloodCardCount;
     }

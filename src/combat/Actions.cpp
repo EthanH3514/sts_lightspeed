@@ -180,6 +180,8 @@ Action Actions::DrawCards(int amount) {
 
 Action Actions::EmptyDeckShuffle() {
     return {[=] (BattleContext &bc) {
+        bc.cards.publicKnownBottomIds.clear();
+        bc.cards.publicBottomOrderUncertain = false;
         java::Collections::shuffle(
                 bc.cards.discardPile.begin(),
                 bc.cards.discardPile.end(),
@@ -192,6 +194,8 @@ Action Actions::EmptyDeckShuffle() {
 
 Action Actions::ShuffleDrawPile() {
     return {[=] (BattleContext &bc) {
+        bc.cards.publicKnownBottomIds.clear();
+        bc.cards.publicBottomOrderUncertain = false;
         java::Collections::shuffle(
                 bc.cards.drawPile.begin(),
                 bc.cards.drawPile.end(),

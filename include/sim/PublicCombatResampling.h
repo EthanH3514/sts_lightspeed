@@ -194,12 +194,21 @@ inline void resampleCombatContinuation(
         (pile.empty() || pile.back().uniqueId != knownDrawTopUniqueId)) {
         throw std::runtime_error("known public draw-pile top does not match native state");
     }
+    if (battle.cards.publicBottomOrderUncertain) {
+        throw std::runtime_error("bottom order after random insertion is not yet supported");
+    }
+    const auto &bottom = battle.cards.publicKnownBottomIds;
+    if (bottom.size() > pile.size()) throw std::runtime_error("invalid known bottom size");
+    for (std::size_t i = 0; i < bottom.size(); ++i) {
+        if (pile[i].uniqueId != bottom[i]) throw std::runtime_error("known bottom identity mismatch");
+    }
+    auto unknownBegin = pile.begin() + bottom.size();
     auto unknownEnd = pile.end();
-    if (knownDrawTopUniqueId >= 0) {
+    if (knownDrawTopUniqueId >= 0 && unknownBegin != unknownEnd) {
         --unknownEnd;
     }
     if (!frozenEye) {
-        for (auto it = pile.begin(); it != unknownEnd; ++it) {
+        for (auto it = unknownBegin; it != unknownEnd; ++it) {
             const auto &card = *it;
             const int idx = card.uniqueId;
             if (idx >= 0 && idx < game.deck.size() &&
@@ -217,13 +226,13 @@ inline void resampleCombatContinuation(
     battle.potionRng = Random(seeds[4]);
     battle.shuffleRng = Random(seeds[5]);
     if (!frozenEye) {
-        std::sort(pile.begin(), unknownEnd, [](const CardInstance &a, const CardInstance &b) {
+        std::sort(unknownBegin, unknownEnd, [](const CardInstance &a, const CardInstance &b) {
             return std::tie(a.id, a.upgraded, a.specialData, a.cost, a.costForTurn,
                             a.freeToPlayOnce, a.retain, a.uniqueId) <
                    std::tie(b.id, b.upgraded, b.specialData, b.cost, b.costForTurn,
                             b.freeToPlayOnce, b.retain, b.uniqueId);
         });
-        java::Collections::shuffle(pile.begin(), unknownEnd, java::Random(seeds[6]));
+        java::Collections::shuffle(unknownBegin, unknownEnd, java::Random(seeds[6]));
     }
 }
 }
