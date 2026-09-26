@@ -9,8 +9,13 @@
 
 #include <sstream>
 #include <algorithm>
+#include <iomanip>
+#include <memory>
+#include <stdexcept>
+#include <tuple>
 
 #include "sim/ConsoleSimulator.h"
+#include "sim/PublicCombatResampling.h"
 #include "sim/search/ScumSearchAgent2.h"
 #include "sim/SimHelpers.h"
 #include "sim/PrintHelpers.h"
@@ -21,12 +26,462 @@
 
 using namespace sts;
 
+namespace pybind = pybind11;
+
+namespace {
+
+const char *screenStateName(ScreenState state) {
+    switch (state) {
+        case ScreenState::EVENT_SCREEN: return "EVENT";
+        case ScreenState::REWARDS: return "REWARDS";
+        case ScreenState::BOSS_RELIC_REWARDS: return "BOSS_RELIC_REWARDS";
+        case ScreenState::CARD_SELECT: return "CARD_SELECT";
+        case ScreenState::MAP_SCREEN: return "MAP";
+        case ScreenState::TREASURE_ROOM: return "TREASURE";
+        case ScreenState::REST_ROOM: return "REST";
+        case ScreenState::SHOP_ROOM: return "SHOP";
+        case ScreenState::BATTLE: return "BATTLE";
+        case ScreenState::INVALID:
+        default: return "INVALID";
+    }
+}
+
+const char *outcomeName(GameOutcome outcome) {
+    switch (outcome) {
+        case GameOutcome::PLAYER_VICTORY: return "PLAYER_VICTORY";
+        case GameOutcome::PLAYER_LOSS: return "PLAYER_LOSS";
+        case GameOutcome::UNDECIDED:
+        default: return "UNDECIDED";
+    }
+}
+
+const char *inputStateName(InputState state) {
+    switch (state) {
+        case InputState::PLAYER_NORMAL: return "PLAYER_NORMAL";
+        case InputState::CARD_SELECT: return "CARD_SELECT";
+        case InputState::EXECUTING_ACTIONS: return "EXECUTING_ACTIONS";
+        default: return "OTHER";
+    }
+}
+
+pybind::dict masterDeckCard(const Card &card) {
+    pybind::dict result;
+    result["id"] = getCardEnumName(card.getId());
+    result["upgrades"] = card.getUpgraded();
+    result["type"] = cardTypeStrings[static_cast<int>(card.getType())];
+    result["rarity"] = cardRarityStrings[static_cast<int>(card.getRarity())];
+    result["misc"] = card.misc;
+    return result;
+}
+
+pybind::dict combatCard(const CardInstance &card, const BattleContext *battle = nullptr) {
+    pybind::dict result;
+    result["id"] = getCardEnumName(card.getId());
+    result["cost"] = card.costForTurn;
+    result["upgrades"] = card.getUpgradeCount();
+    result["type"] = cardTypeStrings[static_cast<int>(card.getType())];
+    result["has_target"] = card.requiresTarget();
+    result["exhausts"] = card.doesExhaust();
+    result["ethereal"] = card.isEthereal();
+    result["special_data"] = card.specialData;
+    result["unique_id"] = card.uniqueId;
+    if (battle != nullptr) {
+        result["is_playable"] = card.canUseOnAnyTarget(*battle);
+    }
+    return result;
+}
+
+pybind::list playerPowers(const Player &player) {
+    pybind::list result;
+    for (const auto &entry : player.statusMap) {
+        pybind::dict power;
+        power["id"] = playerStatusEnumStrings[static_cast<int>(entry.first)];
+        power["amount"] = entry.second;
+        result.append(power);
+    }
+    const std::pair<PlayerStatus, int> direct[] = {
+        {PlayerStatus::ARTIFACT, player.artifact},
+        {PlayerStatus::DEXTERITY, player.dexterity},
+        {PlayerStatus::FOCUS, player.focus},
+        {PlayerStatus::STRENGTH, player.strength},
+    };
+    for (const auto &entry : direct) {
+        if (entry.second == 0 || player.statusMap.count(entry.first) != 0) {
+            continue;
+        }
+        pybind::dict power;
+        power["id"] = playerStatusEnumStrings[static_cast<int>(entry.first)];
+        power["amount"] = entry.second;
+        result.append(power);
+    }
+    return result;
+}
+
+pybind::list monsterPowers(const Monster &monster) {
+    pybind::list result;
+    for (int idx = 0; idx < static_cast<int>(MonsterStatus::INVALID); ++idx) {
+        auto status = static_cast<MonsterStatus>(idx);
+        const int amount = monster.getStatusInternal(status);
+        if (amount == 0) {
+            continue;
+        }
+        pybind::dict power;
+        power["id"] = monsterStatusEnumStrings[idx];
+        power["amount"] = amount;
+        result.append(power);
+    }
+    return result;
+}
+
+pybind::dict battleState(const BattleContext &battle) {
+    pybind::dict result;
+    result["turn"] = battle.turn;
+    result["input_state"] = inputStateName(battle.inputState);
+    if (battle.inputState == InputState::CARD_SELECT) {
+        result["card_select_task"] = cardSelectTaskStrings[
+            static_cast<int>(battle.cardSelectInfo.cardSelectTask)];
+    }
+
+    pybind::dict player;
+    player["current_hp"] = battle.player.curHp;
+    player["max_hp"] = battle.player.maxHp;
+    player["block"] = battle.player.block;
+    player["energy"] = battle.player.energy;
+    player["stance"] = stanceStrings[static_cast<int>(battle.player.stance)];
+    player["powers"] = playerPowers(battle.player);
+    result["player"] = player;
+
+    pybind::list monsters;
+    for (int idx = 0; idx < battle.monsters.monsterCount; ++idx) {
+        const auto &monster = battle.monsters.arr[idx];
+        pybind::dict item;
+        item["id"] = monster.getName();
+        item["current_hp"] = monster.curHp;
+        item["max_hp"] = monster.maxHp;
+        item["block"] = monster.block;
+        item["move_id"] = monsterMoveStrings[static_cast<int>(monster.moveHistory[0])];
+        const auto damage = monster.getMoveBaseDamage(battle);
+        item["move_base_damage"] = damage.damage;
+        item["move_hits"] = damage.attackCount;
+        item["is_gone"] = monster.isDeadOrEscaped();
+        item["half_dead"] = monster.halfDead;
+        item["powers"] = monsterPowers(monster);
+        monsters.append(item);
+    }
+    result["monsters"] = monsters;
+
+    pybind::list hand;
+    for (int idx = 0; idx < battle.cards.cardsInHand; ++idx) {
+        hand.append(combatCard(battle.cards.hand[idx], &battle));
+    }
+    result["hand"] = hand;
+
+    pybind::list drawPile;
+    for (const auto &card : battle.cards.drawPile) drawPile.append(combatCard(card));
+    result["draw_pile"] = drawPile;
+    pybind::list discardPile;
+    for (const auto &card : battle.cards.discardPile) discardPile.append(combatCard(card));
+    result["discard_pile"] = discardPile;
+    pybind::list exhaustPile;
+    for (const auto &card : battle.cards.exhaustPile) exhaustPile.append(combatCard(card));
+    result["exhaust_pile"] = exhaustPile;
+    return result;
+}
+
+std::string rngWordHex(std::uint64_t value) {
+    std::ostringstream output;
+    output << std::hex << std::setfill('0') << std::setw(16) << value;
+    return output.str();
+}
+
+pybind::dict rngState(const Random &rng) {
+    pybind::dict result;
+    result["counter"] = rng.counter;
+    result["state0_hex"] = rngWordHex(rng.seed0);
+    result["state1_hex"] = rngWordHex(rng.seed1);
+    return result;
+}
+
+template<typename Container>
+pybind::list monsterEncounterList(const Container &encounters, std::size_t offset = 0) {
+    pybind::list result;
+    for (std::size_t i = offset; i < encounters.size(); ++i) {
+        result.append(monsterEncounterStrings[static_cast<int>(encounters[i])]);
+    }
+    return result;
+}
+
+pybind::list relicList(const std::vector<RelicId> &relics) {
+    pybind::list result;
+    for (const auto relic : relics) {
+        result.append(getRelicName(relic));
+    }
+    return result;
+}
+
+pybind::dict gameRngState(
+    const GameContext &game,
+    const BattleContext *battle
+) {
+    pybind::dict streams;
+    streams["neow"] = rngState(game.neowRng);
+    streams["treasure"] = rngState(game.treasureRng);
+    streams["event"] = rngState(game.eventRng);
+    streams["relic"] = rngState(game.relicRng);
+    streams["potion"] = rngState(battle == nullptr ? game.potionRng : battle->potionRng);
+    streams["card"] = rngState(game.cardRng);
+    streams["card_random"] = rngState(
+        battle == nullptr ? game.cardRandomRng : battle->cardRandomRng
+    );
+    streams["merchant"] = rngState(game.merchantRng);
+    streams["monster"] = rngState(game.monsterRng);
+    streams["shuffle"] = rngState(battle == nullptr ? game.shuffleRng : battle->shuffleRng);
+    streams["misc"] = rngState(battle == nullptr ? game.miscRng : battle->miscRng);
+    streams["math_util"] = rngState(game.mathUtilRng);
+    if (battle != nullptr) {
+        streams["ai"] = rngState(battle->aiRng);
+        streams["monster_hp"] = rngState(battle->monsterHpRng);
+    } else {
+        streams["ai"] = rngState(game.aiRng);
+        streams["monster_hp"] = rngState(game.monsterHpRng);
+    }
+
+    pybind::dict dynamics;
+    dynamics["card_rarity_adjustment"] = game.cardRarityFactor;
+    dynamics["potion_chance_adjustment"] = game.potionChance;
+    dynamics["monster_room_chance"] = game.monsterChance;
+    dynamics["shop_room_chance"] = game.shopChance;
+    dynamics["treasure_room_chance"] = game.treasureChance;
+
+    std::size_t monsterListOffset = game.monsterListOffset;
+    std::size_t eliteMonsterListOffset = game.eliteMonsterListOffset;
+    if (game.curRoom == Room::MONSTER && monsterListOffset > 0) {
+        --monsterListOffset;
+    }
+    if (game.curRoom == Room::ELITE && eliteMonsterListOffset > 0) {
+        --eliteMonsterListOffset;
+    }
+    pybind::dict content;
+    content["monster_list"] = monsterEncounterList(game.monsterList, monsterListOffset);
+    content["elite_monster_list"] = monsterEncounterList(
+        game.eliteMonsterList,
+        eliteMonsterListOffset
+    );
+    pybind::list bosses;
+    if (game.boss != MonsterEncounter::INVALID) {
+        bosses.append(monsterEncounterStrings[static_cast<int>(game.boss)]);
+    }
+    if (game.secondBoss != MonsterEncounter::INVALID) {
+        bosses.append(monsterEncounterStrings[static_cast<int>(game.secondBoss)]);
+    }
+    content["boss_list"] = bosses;
+    content["common_relic_pool"] = relicList(game.commonRelicPool);
+    content["uncommon_relic_pool"] = relicList(game.uncommonRelicPool);
+    content["rare_relic_pool"] = relicList(game.rareRelicPool);
+    content["shop_relic_pool"] = relicList(game.shopRelicPool);
+    content["boss_relic_pool"] = relicList(game.bossRelicPool);
+
+    pybind::dict result;
+    result["format_version"] = 2;
+    result["streams"] = streams;
+    result["dynamics"] = dynamics;
+    result["content"] = content;
+    return result;
+}
+
+class SimulatorSession {
+public:
+    SimulatorSession() : simulator(std::make_unique<ConsoleSimulator>()) {}
+    ~SimulatorSession() { clear(); }
+
+    std::unique_ptr<SimulatorSession> cloneExact() const {
+        ensureReady();
+        auto clone = std::make_unique<SimulatorSession>();
+        clone->simulator->gc = new GameContext(*simulator->gc);
+        if (simulator->gc->map != nullptr) {
+            clone->simulator->gc->map = std::make_shared<Map>(*simulator->gc->map);
+        }
+        *clone->simulator->battleSim.bc = *simulator->battleSim.bc;
+        clone->simulator->battleSim.initialized = simulator->battleSim.initialized;
+        clone->combatOnly = combatOnly;
+        return clone;
+    }
+
+    std::unique_ptr<SimulatorSession> resampleCombat(const std::array<std::uint64_t, 7> &seeds) const {
+        ensureReady();
+        if (!simulator->battleSim.initialized) {
+            throw std::runtime_error("an initialized combat is required");
+        }
+        auto clone = cloneExact();
+        public_sampling::resampleCombatContinuation(
+            *clone->simulator->gc, *clone->simulator->battleSim.bc, seeds
+        );
+        clone->combatOnly = true;
+        return clone;
+    }
+
+    void reset(CharacterClass character, std::uint64_t seed, int ascension) {
+        if (ascension < 0 || ascension > 20) {
+            throw std::invalid_argument("ascension must be between 0 and 20");
+        }
+        clear();
+        simulator = std::make_unique<ConsoleSimulator>();
+        combatOnly = false;
+        simulator->setupGame(seed, character, ascension);
+    }
+
+    std::string getActionsText() const {
+        ensureReady();
+        if (combatOnly && simulator->battleSim.isBattleComplete()) return {};
+        std::ostringstream output;
+        auto *oldBuffer = std::cout.rdbuf(output.rdbuf());
+        try {
+            simulator->printActions(output);
+        } catch (...) {
+            std::cout.rdbuf(oldBuffer);
+            throw;
+        }
+        std::cout.rdbuf(oldBuffer);
+        return output.str();
+    }
+
+    void takeAction(const std::string &action) {
+        ensureReady();
+        SimulatorContext context;
+        context.printFirstLine = false;
+        context.skipTests = true;
+        context.printLogActions = false;
+        context.printInput = false;
+        context.printPrompts = false;
+        context.quitOnTestFailed = true;
+        std::ostringstream output;
+        if (combatOnly) {
+            if (simulator->battleSim.isBattleComplete()) {
+                throw std::runtime_error("the sampled combat has ended");
+            }
+            simulator->battleSim.handleInputLine(action, output, context);
+            return;
+        }
+        simulator->handleInputLine(action, output, context);
+    }
+
+    std::array<int, NNInterface::observation_space_size> getObservation() const {
+        ensureReady();
+        return NNInterface::getInstance()->getObservation(*simulator->gc);
+    }
+
+    pybind::dict getState() const {
+        ensureReady();
+        const auto &game = *simulator->gc;
+        pybind::dict result;
+        result["in_game"] = combatOnly ?
+            simulator->battleSim.bc->outcome == Outcome::UNDECIDED :
+            game.outcome == GameOutcome::UNDECIDED;
+        if (combatOnly) {
+            result["combat_outcome"] =
+                battleOutcomeStrings[static_cast<int>(simulator->battleSim.bc->outcome)];
+        }
+
+        pybind::dict run;
+        run["seed"] = game.seed;
+        run["character"] = characterClassEnumNames[static_cast<int>(game.cc)];
+        run["ascension"] = game.ascension;
+        run["act"] = game.act;
+        run["floor"] = game.floorNum;
+        run["boss"] = monsterEncounterStrings[static_cast<int>(game.boss)];
+        run["room_type"] = roomStrings[static_cast<int>(game.curRoom)];
+        run["room_phase"] = game.screenState == ScreenState::BATTLE ? "COMBAT" : screenStateName(game.screenState);
+        run["action_phase"] = "WAITING_ON_USER";
+        run["outcome"] = outcomeName(game.outcome);
+        result["run"] = run;
+
+        const bool activeBattle = game.screenState == ScreenState::BATTLE && simulator->battleSim.isInitialized();
+        pybind::dict player;
+        player["hp"] = activeBattle ? simulator->battleSim.bc->player.curHp : game.curHp;
+        player["max_hp"] = activeBattle ? simulator->battleSim.bc->player.maxHp : game.maxHp;
+        player["gold"] = activeBattle ? simulator->battleSim.bc->player.gold : game.gold;
+        result["player"] = player;
+
+        pybind::dict keys;
+        keys["emerald"] = game.greenKey;
+        keys["ruby"] = game.redKey;
+        keys["sapphire"] = game.blueKey;
+        result["keys"] = keys;
+
+        pybind::dict inventory;
+        pybind::list deck;
+        for (const auto &card : game.deck.cards) deck.append(masterDeckCard(card));
+        inventory["deck"] = deck;
+        pybind::list relics;
+        for (const auto &relic : game.relics.relics) {
+            pybind::dict item;
+            item["id"] = getRelicName(relic.id);
+            item["counter"] = relic.data;
+            relics.append(item);
+        }
+        inventory["relics"] = relics;
+        pybind::list potions;
+        for (int idx = 0; idx < game.potionCapacity; ++idx) {
+            pybind::dict item;
+            item["id"] = getPotionName(game.potions[idx]);
+            potions.append(item);
+        }
+        inventory["potions"] = potions;
+        result["inventory"] = inventory;
+
+        pybind::dict screen;
+        screen["type"] = screenStateName(game.screenState);
+        screen["name"] = screenStateName(game.screenState);
+        screen["is_up"] = true;
+        result["screen"] = screen;
+
+        if (activeBattle) {
+            result["combat"] = battleState(*simulator->battleSim.bc);
+        }
+        result["rng_state"] = gameRngState(
+            game,
+            activeBattle ? simulator->battleSim.bc : nullptr
+        );
+        return result;
+    }
+
+private:
+    std::unique_ptr<ConsoleSimulator> simulator;
+    bool combatOnly = false;
+
+    void ensureReady() const {
+        if (!simulator || simulator->gc == nullptr) {
+            throw std::runtime_error("SimulatorSession must be reset before use");
+        }
+    }
+
+    void clear() {
+        if (simulator && simulator->gc != nullptr) {
+            delete simulator->gc;
+            simulator->gc = nullptr;
+        }
+        simulator.reset();
+    }
+};
+
+}
+
 PYBIND11_MODULE(slaythespire, m) {
     m.doc() = "pybind11 example plugin"; // optional module docstring
     m.def("play", &sts::py::play, "play Slay the Spire Console");
     m.def("get_seed_str", &SeedHelper::getString, "gets the integral representation of seed string used in the game ui");
     m.def("get_seed_long", &SeedHelper::getLong, "gets the seed string representation of an integral seed");
     m.def("getNNInterface", &sts::NNInterface::getInstance, "gets the NNInterface object");
+
+    pybind11::class_<SimulatorSession>(m, "SimulatorSession")
+        .def(pybind11::init<>())
+        .def("clone_exact", &SimulatorSession::cloneExact)
+        .def("resample_combat", &SimulatorSession::resampleCombat, pybind11::arg("seeds"))
+        .def("reset", &SimulatorSession::reset, pybind11::arg("character"), pybind11::arg("seed"), pybind11::arg("ascension"))
+        .def("get_state", &SimulatorSession::getState)
+        .def("get_observation", &SimulatorSession::getObservation)
+        .def("get_actions_text", &SimulatorSession::getActionsText)
+        .def("take_action", &SimulatorSession::takeAction, pybind11::arg("action"));
 
     pybind11::class_<NNInterface> nnInterface(m, "NNInterface");
     nnInterface.def("getObservation", &NNInterface::getObservation, "get observation array given a GameContext")
