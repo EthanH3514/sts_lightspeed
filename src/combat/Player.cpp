@@ -353,12 +353,11 @@ void Player::wouldDie(BattleContext &bc) {
 }
 
 void Player::applyEndOfTurnPowers(BattleContext &bc) {
-    for (const int damage : bomb1) {
-        bc.addToBot(Actions::DamageAllEnemy(damage));
+    const auto beforeCombust = hasStatus<PS::COMBUST>()
+            ? std::min(bomb1BeforeCombust, bomb1.size()) : bomb1.size();
+    for (std::size_t i = 0; i < beforeCombust; ++i) {
+        bc.addToBot(Actions::DamageAllEnemy(bomb1[i]));
     }
-    bomb1 = std::move(bomb2);
-    bomb2 = std::move(bomb3);
-    bomb3.clear();
 
     for (auto pair : statusMap) {
         if (!hasStatusRuntime(pair.first)) {
@@ -374,6 +373,9 @@ void Player::applyEndOfTurnPowers(BattleContext &bc) {
                 if (!bc.monsters.areMonstersBasicallyDead()) {
                     bc.addToBot(Actions::PlayerLoseHp(combustHpLoss, true)); // todo combust doesnt stack hp loss correctly
                     bc.addToBot(Actions::DamageAllEnemy(pair.second));
+                }
+                for (std::size_t i = beforeCombust; i < bomb1.size(); ++i) {
+                    bc.addToBot(Actions::DamageAllEnemy(bomb1[i]));
                 }
                 break;
 
@@ -443,6 +445,12 @@ void Player::applyEndOfTurnPowers(BattleContext &bc) {
                 break;
         }
     }
+    bomb1 = std::move(bomb2);
+    bomb2 = std::move(bomb3);
+    bomb3.clear();
+    bomb1BeforeCombust = bomb2BeforeCombust;
+    bomb2BeforeCombust = bomb3BeforeCombust;
+    bomb3BeforeCombust = 0;
 }
 
 void Player::applyAtEndOfRoundPowers() {

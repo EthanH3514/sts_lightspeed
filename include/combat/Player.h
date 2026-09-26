@@ -95,6 +95,10 @@ namespace sts {
         std::vector<int> bomb1;
         std::vector<int> bomb2;
         std::vector<int> bomb3;
+        // Per-bucket prefix acquired before the current Combust instance.
+        std::size_t bomb1BeforeCombust = 0;
+        std::size_t bomb2BeforeCombust = 0;
+        std::size_t bomb3BeforeCombust = 0;
 
         template <RelicId r> void setHasRelic(bool value);
         template <PlayerStatus> void setHasStatus(bool value);
@@ -353,6 +357,11 @@ namespace sts {
         }
 
         if (s == PS::COMBUST) {
+            if (!hasStatus<PS::COMBUST>()) {
+                bomb1BeforeCombust = bomb1.size();
+                bomb2BeforeCombust = bomb2.size();
+                bomb3BeforeCombust = bomb3.size();
+            }
             ++combustHpLoss;
         }
         if (s == PS::PANACHE && !hasStatus<s>()) {
