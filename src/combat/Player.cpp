@@ -70,7 +70,7 @@ void Player::gainBlock(BattleContext &bc, int amount) {
         return;
     }
 
-    block += amount;
+    block = std::min(999, block + amount);
 
     if (hasStatus<PS::JUGGERNAUT>()) {
         bc.addToBot(Actions::DamageRandomEnemy(getStatus<PS::JUGGERNAUT>()));
