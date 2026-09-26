@@ -23,7 +23,8 @@ inline bool powersComplete(const Player &player) {
 inline bool effectsResolved(const BattleContext &battle) {
     return battle.outcome == Outcome::UNDECIDED &&
             battle.inputState == InputState::PLAYER_NORMAL &&
-            battle.actionQueue.size == 0 && battle.cardQueue.size == 0;
+            battle.actionQueue.size == 0 && battle.cardQueue.size == 0 &&
+            battle.cards.pendingDiscardCostResets.empty();
 }
 struct PendingBomb {
     int remainingTurns;

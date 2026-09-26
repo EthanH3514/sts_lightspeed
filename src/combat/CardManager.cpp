@@ -29,6 +29,7 @@ void CardManager::init(const sts::GameContext &gc, BattleContext &bc) {
     drawPile.resize(gc.deck.size());
     discardPile.clear();
     exhaustPile.clear();
+    pendingDiscardCostResets.clear();
 
     int normalCount = 0;
     bool isInnateMemo[Deck::MAX_SIZE];
@@ -237,6 +238,28 @@ void CardManager::moveToDiscardPile(const CardInstance &c) {
 #endif
     notifyAddToDiscardPile(c);
     discardPile.push_back(c);
+    if (std::find(pendingDiscardCostResets.begin(), pendingDiscardCostResets.end(),
+                  c.uniqueId) == pendingDiscardCostResets.end()) {
+        pendingDiscardCostResets.push_back(c.uniqueId);
+    }
+}
+
+void CardManager::settleDiscardCosts() {
+    if (pendingDiscardCostResets.empty()) return;
+    // Soul retains the original card even when another action has already moved it.
+    // Reset only moved identities, using their CURRENT combat cost. In particular,
+    // untouched temporary discounts and freeToPlayOnce are not movement resets.
+    const auto settle = [this](CardInstance &c) {
+        if (std::find(pendingDiscardCostResets.begin(), pendingDiscardCostResets.end(),
+                      c.uniqueId) != pendingDiscardCostResets.end()) {
+            c.costForTurn = c.cost;
+        }
+    };
+    for (int i = 0; i < cardsInHand; ++i) settle(hand[i]);
+    for (auto &c : drawPile) settle(c);
+    for (auto &c : discardPile) settle(c);
+    for (auto &c : exhaustPile) settle(c);
+    pendingDiscardCostResets.clear();
 }
 
 void CardManager::moveDiscardPileIntoToDrawPile() {

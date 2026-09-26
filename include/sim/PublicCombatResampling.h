@@ -181,7 +181,8 @@ inline void resampleCombatContinuation(
 ) {
     if (game.screenState != ScreenState::BATTLE ||
         battle.outcome != Outcome::UNDECIDED || battle.inputState != InputState::PLAYER_NORMAL ||
-        battle.actionQueue.size != 0 || battle.cardQueue.size != 0) {
+        battle.actionQueue.size != 0 || battle.cardQueue.size != 0 ||
+        !battle.cards.pendingDiscardCostResets.empty()) {
         throw std::runtime_error("combat sampling requires a resolved PLAYER_NORMAL decision");
     }
     if (game.cc != CharacterClass::IRONCLAD) {

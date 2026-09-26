@@ -43,6 +43,9 @@ namespace sts {
         // Public knowledge from selected bottom placements; bottom-first IDs.
         std::vector<int> publicKnownBottomIds;
         bool publicBottomOrderUncertain = false;
+        // Soul movement completion resets temporary costs, not immediately on discard.
+        // Internal lifecycle bookkeeping; copied with a rollout, never policy input.
+        std::vector<int> pendingDiscardCostResets;
         int handNormalityCount = 0;
         int handPainCount = 0;
         int strikeCount = 0;
@@ -74,6 +77,7 @@ namespace sts {
 
         void moveToDiscardPile(const CardInstance &c);
         void moveDiscardPileIntoToDrawPile();
+        void settleDiscardCosts();
 
         // **************
         void notifyAddCardToCombat(const CardInstance &c);

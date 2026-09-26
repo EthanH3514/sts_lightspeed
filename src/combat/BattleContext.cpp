@@ -826,6 +826,8 @@ void BattleContext::executeActions() {
             }
         }
 
+        // A public normal decision waits for outstanding Soul movement to finish.
+        cards.settleDiscardCosts();
         setState(InputState::PLAYER_NORMAL);
         break;
     }
@@ -2464,9 +2466,12 @@ void BattleContext::drinkPotion(int idx, int target) {
 }
 
 void BattleContext::drawCards(int count) {
-    if (count <= 0 ||
-        player.hasStatus<PS::NO_DRAW>() ||
-         cards.drawPile.size() + cards.discardPile.size() == 0 ||
+    if (count <= 0 || player.hasStatus<PS::NO_DRAW>()) {
+        return;
+    }
+    // Original DrawCardAction waits for SoulGroup before its pile/hand checks.
+    cards.settleDiscardCosts();
+    if (cards.drawPile.size() + cards.discardPile.size() == 0 ||
          cards.cardsInHand == 10 ) {
         return;
     }
