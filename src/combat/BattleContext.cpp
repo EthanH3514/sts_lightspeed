@@ -19,6 +19,7 @@ void BattleContext::init(const GameContext &gc) {
 }
 
 void BattleContext::init(const GameContext &gc, MonsterEncounter encounterToInit) {
+    publicMovedDrawTopUniqueId = -1;
     undefinedBehaviorEvoked = false;
     haveUsedDiscoveryAction = false;
     seed = gc.seed;
@@ -3065,6 +3066,7 @@ void BattleContext::chooseWarcryCard(int handIdx) {
 #ifdef sts_asserts
     assert(handIdx >= 0 && handIdx < cards.cardsInHand);
 #endif
+    publicMovedDrawTopUniqueId = cards.hand[handIdx].uniqueId;
     cards.moveToDrawPileTop(cards.hand[handIdx]);
     cards.removeFromHandAtIdx(handIdx);
 }

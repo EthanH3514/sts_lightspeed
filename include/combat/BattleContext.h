@@ -56,6 +56,9 @@ namespace sts {
         int loopCount = 0;
         int energyWasted = 0;
         int cardsDrawn = 0;
+        // Public selected-card movement during the current submitted action.
+        // This records the chosen identity, never an unobserved draw-pile top.
+        int publicMovedDrawTopUniqueId = -1;
         // end for debugging purposes
 
         Random aiRng;

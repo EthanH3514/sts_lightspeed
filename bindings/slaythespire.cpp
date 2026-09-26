@@ -373,6 +373,7 @@ public:
 
     void takeAction(const std::string &action) {
         ensureReady();
+        simulator->battleSim.bc->publicMovedDrawTopUniqueId = -1;
         SimulatorContext context;
         context.printFirstLine = false;
         context.skipTests = true;
@@ -463,6 +464,8 @@ public:
 
         if (activeBattle) {
             result["combat"] = battleState(*simulator->battleSim.bc);
+            result["public_moved_draw_top_unique_id"] =
+                simulator->battleSim.bc->publicMovedDrawTopUniqueId;
         }
         result["rng_state"] = gameRngState(
             game,
