@@ -803,6 +803,7 @@ namespace sts {
                 return upgraded ? 1 : 2;
 
             case CardId::HAVOC:
+            case CardId::INFERNAL_BLADE:
             case CardId::SEEING_RED:
             case CardId::BODY_SLAM:
             case CardId::EXHUME:
