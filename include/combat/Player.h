@@ -57,6 +57,8 @@ namespace sts {
         std::uint64_t statusBits0 = 0;
         std::uint32_t statusBits1 = 0;
         std::map<PlayerStatus, std::int16_t> statusMap;
+        // Evolve and Fire Breathing have equal priority; acquisition order matters.
+        bool fireBreathingBeforeEvolve = false;
 
         std::uint64_t relicBits0 = 0;
         std::uint64_t relicBits1 = 0;
@@ -353,6 +355,11 @@ namespace sts {
         if (hasStatus<s>()) {
             statusMap[s] += amount;
         } else {
+            if (s == PS::EVOLVE) {
+                fireBreathingBeforeEvolve = hasStatus<PS::FIRE_BREATHING>();
+            } else if (s == PS::FIRE_BREATHING) {
+                fireBreathingBeforeEvolve = !hasStatus<PS::EVOLVE>();
+            }
             setHasStatus<s>(true);
             statusMap[s] = amount;
         }

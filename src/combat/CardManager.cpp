@@ -417,10 +417,13 @@ void CardManager::draw(BattleContext &bc, int amount) {
             }
 
         } else if (c.getType() == CardType::STATUS) {
+            if (fireBreathing && bc.player.fireBreathingBeforeEvolve) {
+                bc.addToBot( Actions::DamageAllEnemy(fireBreathing) );
+            }
             if (evolve) {
                 bc.addToBot( Actions::DrawCards(evolve) );
             }
-            if (fireBreathing) {
+            if (fireBreathing && !bc.player.fireBreathingBeforeEvolve) {
                 bc.addToBot( Actions::DamageAllEnemy(fireBreathing) );
             }
             if (c.getId() == CardId::VOID) {
