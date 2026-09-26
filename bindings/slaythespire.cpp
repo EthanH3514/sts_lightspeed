@@ -84,6 +84,9 @@ pybind::dict combatCard(const CardInstance &card, const BattleContext *battle = 
     result["exhausts"] = card.doesExhaust();
     result["ethereal"] = card.isEthereal();
     result["special_data"] = card.specialData;
+    if (card.getId() == CardId::RAMPAGE) {
+        result["base_damage"] = 8 + card.specialData;
+    }
     result["unique_id"] = card.uniqueId;
     if (battle != nullptr) {
         result["is_playable"] = card.canUseOnAnyTarget(*battle);
