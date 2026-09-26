@@ -537,39 +537,20 @@ void CardManager::findAndUpgradeSpecialData(const std::int16_t uniqueId, const i
 }
 
 void CardManager::onBuffCorruption() {
-    // game does modifyCostForCombat here but I don't think its necessary as skills cant cost more than 4?
-    for (int i = 0; i < cardsInHand; ++i) {
-        auto &c = hand[i];
-        if (c.getType() == CardType::SKILL && c.cost > 0) {
-            c.cost = 0;
+    // ApplyPowerAction uses modifyCostForCombat(-9), not an unconditional zero.
+    const auto modifySkill = [](CardInstance &c) {
+        if (c.getType() != CardType::SKILL) return;
+        if (c.costForTurn > 0) {
+            c.cost = c.costForTurn = std::max(0, static_cast<int>(c.costForTurn) - 9);
+        } else if (c.cost >= 0) {
+            c.cost = std::max(0, static_cast<int>(c.cost) - 9);
             c.costForTurn = 0;
         }
-    }
-
-    // probably only need to do hand?
-
-    for (auto &c : drawPile) {
-        if (c.getType() == CardType::SKILL && c.cost > 0) {
-            c.cost = 0;
-            c.costForTurn = 0;
-        }
-    }
-
-    for (auto &c : discardPile) {
-        if (c.getType() == CardType::SKILL && c.cost > 0) {
-            c.cost = 0;
-            c.costForTurn = 0;
-        }
-    }
-
-    for (auto &c : exhaustPile) {
-        if (c.getType() == CardType::SKILL && c.cost > 0) {
-            c.cost = 0;
-            c.costForTurn = 0;
-        }
-    }
-
-
+    };
+    for (int i = 0; i < cardsInHand; ++i) modifySkill(hand[i]);
+    for (auto &c : drawPile) modifySkill(c);
+    for (auto &c : discardPile) modifySkill(c);
+    for (auto &c : exhaustPile) modifySkill(c);
 }
 
 // **************** END SPECIAL HELPERS ****************
