@@ -772,9 +772,9 @@ void BattleContext::executeActions() {
             bool hasDamageWithoutCards = player.hasStatus<PS::OMEGA>() ||
                     player.hasStatus<PS::THORNS>() ||
                     player.hasStatus<PS::MAGNETISM>() ||
-                    player.bomb1 ||
-                    player.bomb2 ||
-                    player.bomb3;
+                    !player.bomb1.empty() ||
+                    !player.bomb2.empty() ||
+                    !player.bomb3.empty();
 
             if (!hasDamageWithoutCards && monsters.arr[0].id != MonsterId::TRANSIENT) {
                 outcome = Outcome::PLAYER_LOSS;

@@ -91,9 +91,10 @@ namespace sts {
         int16_t lastAttackUnblockedDamage = 0;
         int16_t timesDamagedThisCombat = 0;
 
-        int8_t bomb1 = 0;
-        int8_t bomb2 = 0;
-        int8_t bomb3 = 0;
+        // Each Bomb is an independent damage packet, grouped by remaining turns.
+        std::vector<int> bomb1;
+        std::vector<int> bomb2;
+        std::vector<int> bomb3;
 
         template <RelicId r> void setHasRelic(bool value);
         template <PlayerStatus> void setHasStatus(bool value);
@@ -333,7 +334,7 @@ namespace sts {
         }
 
         if (s == PS::THE_BOMB) {
-            bomb3 += amount;
+            bomb3.push_back(amount);
             return;
         }
 
