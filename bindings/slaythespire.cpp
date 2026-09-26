@@ -162,6 +162,7 @@ pybind::list monsterPowers(const Monster &monster) {
 pybind::dict battleState(const BattleContext &battle) {
     pybind::dict result;
     result["turn"] = battle.turn;
+    result["times_damaged"] = battle.player.timesDamagedThisCombat;
     result["input_state"] = inputStateName(battle.inputState);
     if (battle.inputState == InputState::CARD_SELECT) {
         result["card_select_task"] = cardSelectTaskStrings[
