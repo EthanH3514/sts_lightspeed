@@ -56,6 +56,8 @@ namespace sts {
         std::uint32_t justAppliedBits = 0;
         std::uint64_t statusBits0 = 0;
         std::uint32_t statusBits1 = 0;
+        // Equal-priority exhaust powers retain their relative acquisition order.
+        bool feelNoPainBeforeDarkEmbrace = false;
         std::map<PlayerStatus, std::int16_t> statusMap;
         // Evolve and Fire Breathing have equal priority; acquisition order matters.
         bool fireBreathingBeforeEvolve = false;
@@ -352,6 +354,13 @@ namespace sts {
             ++combustHpLoss;
         }
 
+        if (!hasStatus<s>()) {
+            if (s == PS::FEEL_NO_PAIN) {
+                feelNoPainBeforeDarkEmbrace = !hasStatus<PS::DARK_EMBRACE>();
+            } else if (s == PS::DARK_EMBRACE) {
+                feelNoPainBeforeDarkEmbrace = hasStatus<PS::FEEL_NO_PAIN>();
+            }
+        }
         if (hasStatus<s>()) {
             statusMap[s] += amount;
         } else {

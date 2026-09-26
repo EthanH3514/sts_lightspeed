@@ -2836,11 +2836,14 @@ void BattleContext::triggerAndMoveToExhaustPile(CardInstance c) {
         addToBot(Actions::MakeTempCardInHand(id));
     }
 
+    if (player.hasStatus<PS::FEEL_NO_PAIN>() && player.feelNoPainBeforeDarkEmbrace) {
+        addToBot(Actions::GainBlock(player.getStatus<PS::FEEL_NO_PAIN>()));
+    }
     if (player.hasStatus<PS::DARK_EMBRACE>()) {
         addToBot(Actions::DrawCards(player.getStatus<PS::DARK_EMBRACE>()));
     }
 
-    if (player.hasStatus<PS::FEEL_NO_PAIN>()) {
+    if (player.hasStatus<PS::FEEL_NO_PAIN>() && !player.feelNoPainBeforeDarkEmbrace) {
         addToBot(Actions::GainBlock(player.getStatus<PS::FEEL_NO_PAIN>()));
     }
 
