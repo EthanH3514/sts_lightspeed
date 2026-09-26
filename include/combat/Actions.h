@@ -130,8 +130,8 @@ namespace sts {
 
         static Action PutRandomCardsInDrawPile(CardType type, int count); // used by chrysalis and metamorphosis
         static Action DiscoveryAction(CardType type, int amount); // attack potion, skill potion
-        static Action InfernalBladeAction();
-        static Action JackOfAllTradesAction(bool upgraded);
+        static Action InfernalBladeAction(BattleContext &bc);
+        static Action JackOfAllTradesAction(BattleContext &bc, bool upgraded);
         static Action TransmutationAction(bool upgraded, int energy, bool useEnergy);
         static Action ViolenceAction(int count);
 

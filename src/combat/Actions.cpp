@@ -568,24 +568,22 @@ Action Actions::DiscoveryAction(CardType type, int amount) {
     }};
 }
 
-Action Actions::InfernalBladeAction() {
-    return {[=] (BattleContext &bc) {
-        const auto cid = getTrulyRandomCardInCombat(bc.cardRandomRng, bc.player.cc, CardType::ATTACK);
-        CardInstance c(cid);
-        c.setCostForTurn(0);
-        bc.addToTop( Actions::MakeTempCardInHand(c) );
-    }};
+Action Actions::InfernalBladeAction(BattleContext &bc) {
+    // Select during card use; only insertion is deferred.
+    const auto cid = getTrulyRandomCardInCombat(bc.cardRandomRng, bc.player.cc, CardType::ATTACK);
+    CardInstance c(cid);
+    c.setCostForTurn(0);
+    return Actions::MakeTempCardInHand(c);
 }
 
-Action Actions::JackOfAllTradesAction(bool upgraded) {
-    return {[=] (BattleContext &bc) {
-        const auto c1 = sts::getTrulyRandomColorlessCardInCombat(bc.cardRandomRng);
-        bc.addToTop( Actions::MakeTempCardInHand(c1) );
-        if (upgraded) {
-            auto c2 = sts::getTrulyRandomColorlessCardInCombat(bc.cardRandomRng);
-            bc.addToTop( Actions::MakeTempCardInHand(c2) );
-        }
-    }};
+Action Actions::JackOfAllTradesAction(BattleContext &bc, bool upgraded) {
+    std::vector<CardInstance> cards;
+    cards.emplace_back(sts::getTrulyRandomColorlessCardInCombat(bc.cardRandomRng));
+    if (upgraded) {
+        cards.emplace_back(sts::getTrulyRandomColorlessCardInCombat(bc.cardRandomRng));
+    }
+    // Preserve selection order, including which card overflows a full hand.
+    return Actions::MakeTempCardsInHand(cards);
 }
 
 Action Actions::TransmutationAction(bool upgraded, int energy, bool useEnergy) {

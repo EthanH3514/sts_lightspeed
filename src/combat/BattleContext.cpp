@@ -1377,15 +1377,15 @@ void BattleContext::useSkillCard() {
             break;
 
         case CardId::INFERNAL_BLADE:
-            addToBot( Actions::InfernalBladeAction() );
+            addToBot( Actions::InfernalBladeAction(*this) );
             break;
 
         case CardId::INTIMIDATE:
             addToBot( Actions::DebuffAllEnemy<MS::WEAK>(up ? 2 : 1, false) ); // game justs adds one for each enemy in order
             break;
 
-        case CardId::JACK_OF_ALL_TRADES: // the game decides the random cards here and adds maketempcardtobot
-            addToBot( Actions::JackOfAllTradesAction(up) );
+        case CardId::JACK_OF_ALL_TRADES:
+            addToBot( Actions::JackOfAllTradesAction(*this, up) );
             break;
 
         case CardId::JAX:
