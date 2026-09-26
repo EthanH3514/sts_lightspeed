@@ -1,0 +1,33 @@
+add_library(sts_regression_core OBJECT ${sts_lightspeed_SOURCES})
+target_include_directories(sts_regression_core PRIVATE
+    "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/json/single_include")
+file(GLOB regression_sources CONFIGURE_DEPENDS "native/*.cpp")
+set(regression_targets)
+set(regression_runtime_dlls)
+if(MINGW)
+    foreach(dll libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
+        execute_process(COMMAND "${CMAKE_CXX_COMPILER}" "-print-file-name=${dll}"
+            OUTPUT_VARIABLE dll_path OUTPUT_STRIP_TRAILING_WHITESPACE
+            COMMAND_ERROR_IS_FATAL ANY)
+        if(NOT EXISTS "${dll_path}")
+            message(FATAL_ERROR "Missing compiler runtime: ${dll}")
+        endif()
+        list(APPEND regression_runtime_dlls "${dll_path}")
+    endforeach()
+endif()
+foreach(source ${regression_sources})
+    get_filename_component(name "${source}" NAME_WE)
+    set(target "regression_${name}")
+    add_executable(${target} "${source}" $<TARGET_OBJECTS:sts_regression_core>)
+    target_include_directories(${target} PRIVATE
+        "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/json/single_include")
+    if(MINGW)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${regression_runtime_dlls}
+                "$<TARGET_FILE_DIR:${target}>" VERBATIM)
+    endif()
+    add_test(NAME "ai.${name}" COMMAND ${target})
+    set_tests_properties("ai.${name}" PROPERTIES TIMEOUT 30)
+    list(APPEND regression_targets ${target})
+endforeach()
+add_custom_target(ai-regressions DEPENDS ${regression_targets})
