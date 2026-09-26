@@ -90,6 +90,8 @@ pybind::dict combatCard(const CardInstance &card, const BattleContext *battle = 
     result["special_data"] = card.specialData;
     if (card.getId() == CardId::RAMPAGE) {
         result["base_damage"] = 8 + card.specialData;
+    } else if (card.getId() == CardId::RITUAL_DAGGER) {
+        result["base_damage"] = card.specialData;
     }
     result["unique_id"] = card.uniqueId;
     if (battle != nullptr) {
