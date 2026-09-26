@@ -883,6 +883,11 @@ void BattleContext::useCard() {
     item.exhaustOnUse |= c.doesExhaust();
     ++player.cardsPlayedThisTurn;
 
+    // AbstractPlayer.useCard makes autoplayed X-cost cards free before use().
+    if (c.isXCost() && item.autoplay) {
+        c.freeToPlayOnce = true;
+    }
+
     switch (c.getType()) {
         case CardType::ATTACK:
             useAttackCard();
