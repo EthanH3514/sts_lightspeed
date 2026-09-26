@@ -107,6 +107,16 @@ pybind::list playerPowers(const Player &player) {
                 amount = player.getStatus<PS::EVOLVE>();
             }
         }
+        if (player.feelNoPainBeforeDarkEmbrace && player.hasStatus<PS::DARK_EMBRACE>() &&
+            player.hasStatus<PS::FEEL_NO_PAIN>()) {
+            if (status == PS::DARK_EMBRACE) {
+                status = PS::FEEL_NO_PAIN;
+                amount = player.getStatus<PS::FEEL_NO_PAIN>();
+            } else if (status == PS::FEEL_NO_PAIN) {
+                status = PS::DARK_EMBRACE;
+                amount = player.getStatus<PS::DARK_EMBRACE>();
+            }
+        }
         pybind::dict power;
         power["id"] = playerStatusEnumStrings[static_cast<int>(status)];
         power["amount"] = amount;
