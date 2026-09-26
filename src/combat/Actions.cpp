@@ -1203,10 +1203,10 @@ Action Actions::SecondWindAction(int blockPerCard) {
 
 Action Actions::SeverSoulExhaustAction() {
     return {[=] (BattleContext &bc) {
-        for (int i = bc.cards.cardsInHand-1; i >= 0; --i) {
+        for (int i = 0; i < bc.cards.cardsInHand; ++i) {
             const auto &c = bc.cards.hand[i];
             if (c.getType() != CardType::ATTACK) {
-                bc.addToBot( Actions::ExhaustSpecificCardInHand(i, c.getUniqueId()) );
+                bc.addToTop( Actions::ExhaustSpecificCardInHand(i, c.getUniqueId()) );
             }
         }
     }};
