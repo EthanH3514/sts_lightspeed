@@ -167,6 +167,21 @@ pybind::dict battleState(const BattleContext &battle) {
     if (battle.inputState == InputState::CARD_SELECT) {
         result["card_select_task"] = cardSelectTaskStrings[
             static_cast<int>(battle.cardSelectInfo.cardSelectTask)];
+        if (battle.cardSelectInfo.cardSelectTask == CardSelectTask::DISCOVERY) {
+            pybind::list candidates;
+            for (const auto id : battle.cardSelectInfo.cards) {
+                CardInstance preview(id);
+                if (id == CardId::BLOOD_FOR_BLOOD) {
+                    preview.updateCost(-battle.player.timesDamagedThisCombat);
+                }
+                auto card = combatCard(preview);
+                card.attr("pop")("unique_id"); // Preview, not an existing combat card.
+                card["base_cost"] = preview.cost;
+                candidates.append(card);
+            }
+            result["selection_candidates"] = candidates;
+            result["selection_copy_count"] = battle.cardSelectInfo.data0;
+        }
     }
 
     pybind::dict player;
