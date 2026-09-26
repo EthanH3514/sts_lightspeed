@@ -123,6 +123,11 @@ pybind::list playerPowers(const Player &player) {
         pybind::dict power;
         power["id"] = playerStatusEnumStrings[static_cast<int>(status)];
         power["amount"] = amount;
+        if (status == PS::PANACHE) {
+            // Match public PanachePower.amount (remaining plays) and damage.
+            power["amount"] = static_cast<int>(player.panacheCounter);
+            power["damage"] = amount;
+        }
         result.append(power);
     }
     const std::pair<PlayerStatus, int> direct[] = {
