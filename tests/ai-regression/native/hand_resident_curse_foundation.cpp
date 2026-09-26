@@ -5,6 +5,7 @@
 #include "combat/BattleContext.h"
 #include "game/GameContext.h"
 #include "sim/search/Action.h"
+#include "sim/PublicCombatResampling.h"
 using namespace sts;
 namespace {
 int checks = 0, failures = 0;
@@ -150,9 +151,27 @@ void movementAndTurns() {
     check(automatic.bc.cards.hand[1].cost == 3 && automatic.bc.cards.hand[1].costForTurn == 3,
           "Pain HP loss lowers Blood for Blood in active hand");
 }
+void publicCounterSampling() {
+    const std::array<std::uint64_t, 7> seeds {11,22,33,44,55,66,77};
+    for (int count : {0, 2, 3, 7}) {
+        Fixture f; f.hand(CardId::NORMALITY); f.hand(CardId::STRIKE_RED); f.hand(CardId::PAIN);
+        f.bc.player.cardsPlayedThisTurn = count;
+        auto a = f.bc, b = f.bc;
+        std::reverse(b.cards.drawPile.begin(), b.cards.drawPile.end());
+        public_sampling::resampleCombatContinuation(f.game, a, seeds);
+        public_sampling::resampleCombatContinuation(f.game, b, seeds);
+        check(a.player.cardsPlayedThisTurn == count && b.player.cardsPlayedThisTurn == count,
+              "public actual play count survives hidden-world resampling");
+        check(a.cards.handNormalityCount == 1 && a.cards.handPainCount == 1,
+              "resident public identities survive resampling");
+        check(a.cards.hand[1].canUse(a, 0, false) == (count < 3), "sample legality uses public play count");
+        for (std::size_t i = 0; i < a.cards.drawPile.size(); ++i)
+            check(a.cards.drawPile[i].getUniqueId() == b.cards.drawPile[i].getUniqueId(), "paired hidden-order invariance");
+    }
+}
 }
 int main() {
-    painPackets(); painIdentity(); normalityGates(); repeats(); movementAndTurns();
+    painPackets(); painIdentity(); normalityGates(); repeats(); movementAndTurns(); publicCounterSampling();
     std::cout << "HAND_RESIDENT_CURSE_FOUNDATION " << failures << " failures / " << checks << " checks\n";
     return failures ? 1 : 0;
 }

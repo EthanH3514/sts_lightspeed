@@ -161,6 +161,8 @@ pybind::list monsterPowers(const Monster &monster) {
 pybind::dict battleState(const BattleContext &battle) {
     pybind::dict result;
     result["turn"] = battle.turn;
+    result["turn_play_count_schema"] = 1;
+    result["cards_played_this_turn"] = static_cast<int>(battle.player.cardsPlayedThisTurn);
     result["bomb_state_schema"] = public_state::bombStateSchema;
     result["powers_complete"] = public_state::powersComplete(battle.player);
     result["effects_resolved"] = public_state::effectsResolved(battle);
@@ -1351,5 +1353,4 @@ PYBIND11_MODULE(slaythespire, m) {
 }
 
 // os.add_dll_directory("C:\\Program Files\\mingw-w64\\x86_64-8.1.0-posix-seh-rt_v6-rev0\\mingw64\\bin")
-
 
