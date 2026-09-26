@@ -278,6 +278,11 @@ bool CardInstance::canUseOnAnyTarget(const BattleContext &bc) const {
 }
 
 bool CardInstance::canUse(const BattleContext &bc, int target, const bool inAutoplay) const {
+    // Hand canPlay restrictions apply to manual, automatic and repeat plays.
+    // The queue dispatcher checks this shared gate for purged copies too.
+    if (!bc.isHandCardPlayAllowed()) {
+        return false;
+    }
     if (this->requiresTarget() && (bc.monsters.areMonstersBasicallyDead() || !bc.monsters.arr[target].isTargetable())) {
         return false;
     }

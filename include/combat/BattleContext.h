@@ -147,6 +147,7 @@ namespace sts {
         void cleanCardQueue();
 
         [[nodiscard]] bool isCardPlayAllowed() const;
+        [[nodiscard]] bool isHandCardPlayAllowed() const;
 
         // **********************
 

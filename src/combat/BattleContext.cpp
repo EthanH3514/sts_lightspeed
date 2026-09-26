@@ -715,11 +715,11 @@ bool BattleContext::isCardPlayAllowed() const {
         return false;
     }
 
-    if (cards.handNormalityCount && player.cardsPlayedThisTurn >= 3) {
-        return false;
-    }
+    return isHandCardPlayAllowed();
+}
 
-    return true;
+bool BattleContext::isHandCardPlayAllowed() const {
+    return cards.handNormalityCount == 0 || player.cardsPlayedThisTurn < 3;
 }
 
 void BattleContext::executeActions() {
@@ -855,7 +855,7 @@ void BattleContext::playCardQueueItem(CardQueueItem playItem) {
 
 //    bool canPlayCard = false; // not really sure what this is used for
     const bool chokerAllowsPlay = !player.hasRelic<R::VELVET_CHOKER>() || player.cardsPlayedThisTurn < 6;
-    const bool canUseCard = item.purgeOnUse || (item.triggerOnUse && chokerAllowsPlay && c.canUse(*this, item.target, item.autoplay) && (!c.requiresTarget() || monsters.arr[item.target].isTargetable()));
+    const bool canUseCard = isHandCardPlayAllowed() && (item.purgeOnUse || (item.triggerOnUse && chokerAllowsPlay && c.canUse(*this, item.target, item.autoplay) && (!c.requiresTarget() || monsters.arr[item.target].isTargetable())));
     if (canUseCard) { // not sure if this is correct,
 //        canPlayCard = true; // what is this for......
 
@@ -2689,10 +2689,17 @@ void BattleContext::triggerOnEndOfTurnForPlayingCards() {
 void BattleContext::triggerOnOtherCardPlayed(const CardInstance &usedCard) {
     int painCount = cards.handPainCount;
     if (usedCard.getId() == CardId::PAIN) {
-        --painCount;
+        // Only the actual played hand identity is excluded. Autoplayed Pain
+        // from another pile must still trigger every resident Pain.
+        for (int i = 0; i < cards.cardsInHand; ++i) {
+            if (cards.hand[i].getUniqueId() == usedCard.getUniqueId()) {
+                --painCount;
+                break;
+            }
+        }
     }
     for (int i = 0; i < painCount; ++i) {
-        addToTop(Actions::PlayerLoseHp(1));
+        addToTop(Actions::PlayerLoseHp(1, true));
     }
 
     const auto thousandCuts = player.getStatus<PS::THOUSAND_CUTS>();

@@ -22,8 +22,11 @@ cmake --build build --target slaythespire ai-regressions -j 8
 ctest --test-dir build --output-on-failure -j 4
 ```
 
-The optional suite contains 71 first-party C++ executable fixtures: 68 imported
-from spire-ai 563476c plus the passive-status, basic-curse and end-hand-curse batches. No game JARs, decompiled game sources, raw trajectories, secrets
+The optional suite contains 72 first-party C++ executable fixtures: 68 imported
+from spire-ai 563476c plus passive-status, basic-curse, end-hand-curse and
+hand-resident-curse fixtures. The latter checks Pain self-source/identity and
+Normality manual/autoplay/repeat restrictions; native coverage alone does not
+grant the AI consumer public-state or policy support. No game JARs, decompiled game sources, raw trajectories, secrets
 or model/RNG captures are included. Test sources are provided under the MIT license
 in `tests/ai-regression/LICENSE`. MinGW runtime DLLs are resolved from the selected
 compiler and copied beside the test programs; generated binaries remain ignored.
