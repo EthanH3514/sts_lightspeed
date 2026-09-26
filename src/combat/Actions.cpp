@@ -572,6 +572,10 @@ Action Actions::InfernalBladeAction(BattleContext &bc) {
     // Select during card use; only insertion is deferred.
     const auto cid = getTrulyRandomCardInCombat(bc.cardRandomRng, bc.player.cc, CardType::ATTACK);
     CardInstance c(cid);
+    // BloodForBlood.makeCopy inherits the combat's prior positive HP-loss events.
+    if (cid == CardId::BLOOD_FOR_BLOOD) {
+        c.updateCost(-bc.player.timesDamagedThisCombat);
+    }
     c.setCostForTurn(0);
     return Actions::MakeTempCardInHand(c);
 }
