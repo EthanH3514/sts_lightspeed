@@ -94,9 +94,22 @@ pybind::dict combatCard(const CardInstance &card, const BattleContext *battle = 
 pybind::list playerPowers(const Player &player) {
     pybind::list result;
     for (const auto &entry : player.statusMap) {
+        auto status = entry.first;
+        auto amount = entry.second;
+        // Preserve this public callback order, not the enum-sorted map order.
+        if (player.fireBreathingBeforeEvolve && player.hasStatus<PS::EVOLVE>() &&
+            player.hasStatus<PS::FIRE_BREATHING>()) {
+            if (status == PS::EVOLVE) {
+                status = PS::FIRE_BREATHING;
+                amount = player.getStatus<PS::FIRE_BREATHING>();
+            } else if (status == PS::FIRE_BREATHING) {
+                status = PS::EVOLVE;
+                amount = player.getStatus<PS::EVOLVE>();
+            }
+        }
         pybind::dict power;
-        power["id"] = playerStatusEnumStrings[static_cast<int>(entry.first)];
-        power["amount"] = entry.second;
+        power["id"] = playerStatusEnumStrings[static_cast<int>(status)];
+        power["amount"] = amount;
         result.append(power);
     }
     const std::pair<PlayerStatus, int> direct[] = {
