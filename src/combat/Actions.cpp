@@ -543,21 +543,21 @@ Action Actions::OnAfterCardUsed() {
     }, false};
 }
 
-Action Actions::PutRandomCardsInDrawPile(CardType type, int count) {
-    return {[=] (BattleContext &bc) {
-        CardId ids[5];
-        for (int i = 0; i < count; ++i) {
-            ids[i] = getTrulyRandomCardInCombat(bc.cardRandomRng, bc.player.cc, type);
+Action Actions::PutRandomCardsInDrawPile(BattleContext &bc, CardType type, int count) {
+    // The cards select their identities during use; random insertion is queued.
+    std::vector<CardInstance> cards;
+    for (int i = 0; i < count; ++i) {
+        const auto id = getTrulyRandomCardInCombat(bc.cardRandomRng, bc.player.cc, type);
+        CardInstance card(id, false);
+        // Chrysalis/Metamorphosis only lower positive costs; X stays X.
+        if (card.cost > 0) {
+            card.cost = 0;
+            card.costForTurn = 0;
         }
-
-        for (int i = 0; i < count; ++i) {
-            CardInstance card(ids[i], false);
-            // Chrysalis/Metamorphosis only lower positive costs; X stays X.
-            if (card.cost > 0) {
-                card.cost = 0;
-                card.costForTurn = 0;
-            }
-
+        cards.push_back(card);
+    }
+    return {[=] (BattleContext &bc) {
+        for (const auto &card : cards) {
             const int idx = bc.cards.drawPile.empty() ? 0 : bc.cardRandomRng.random(static_cast<int>(bc.cards.drawPile.size()-1));
             bc.cards.createTempCardInDrawPile(idx, card);
         }

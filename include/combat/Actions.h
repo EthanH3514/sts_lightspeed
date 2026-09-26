@@ -128,7 +128,7 @@ namespace sts {
         static Action FiendFireAction(int targetIdx, int calculatedDamage); // Fiend Fire Card
         static Action SwordBoomerangAction(int baseDamage); // Sword Boomerang
 
-        static Action PutRandomCardsInDrawPile(CardType type, int count); // used by chrysalis and metamorphosis
+        static Action PutRandomCardsInDrawPile(BattleContext &bc, CardType type, int count); // used by chrysalis and metamorphosis
         static Action DiscoveryAction(CardType type, int amount); // attack potion, skill potion
         static Action InfernalBladeAction(BattleContext &bc);
         static Action JackOfAllTradesAction(BattleContext &bc, bool upgraded);

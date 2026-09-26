@@ -1279,7 +1279,7 @@ void BattleContext::useSkillCard() {
             break;
 
         case CardId::CHRYSALIS:
-            addToBot( Actions::PutRandomCardsInDrawPile(CardType::SKILL, up ? 5 : 3) );
+            addToBot( Actions::PutRandomCardsInDrawPile(*this, CardType::SKILL, up ? 5 : 3) );
             break;
 
         case CardId::DARK_SHACKLES:
@@ -1406,7 +1406,7 @@ void BattleContext::useSkillCard() {
             break;
 
         case CardId::METAMORPHOSIS:
-            addToBot( Actions::PutRandomCardsInDrawPile(CardType::ATTACK, up ? 5 : 3) );
+            addToBot( Actions::PutRandomCardsInDrawPile(*this, CardType::ATTACK, up ? 5 : 3) );
             break;
 
         case CardId::OFFERING:
