@@ -180,6 +180,8 @@ Action Actions::DrawCards(int amount) {
 
 Action Actions::EmptyDeckShuffle() {
     return {[=] (BattleContext &bc) {
+        bc.cards.publicKnownTopIds.clear();
+        bc.cards.publicTopOrderUncertain = false;
         bc.cards.publicKnownBottomIds.clear();
         bc.cards.publicBottomOrderUncertain = false;
         java::Collections::shuffle(
@@ -194,6 +196,8 @@ Action Actions::EmptyDeckShuffle() {
 
 Action Actions::ShuffleDrawPile() {
     return {[=] (BattleContext &bc) {
+        bc.cards.publicKnownTopIds.clear();
+        bc.cards.publicTopOrderUncertain = false;
         bc.cards.publicKnownBottomIds.clear();
         bc.cards.publicBottomOrderUncertain = false;
         java::Collections::shuffle(
@@ -250,7 +254,7 @@ Action Actions::MakeTempCardInDrawPile(const CardInstance &c, int amount, bool s
             }
             else {
                 // Non-random generation places each new identity on top.
-                bc.cards.createTempCardInDrawPile(static_cast<int>(bc.cards.drawPile.size()), c);
+                bc.cards.createTempCardOnDrawTop(c);
             }
         }
     }};

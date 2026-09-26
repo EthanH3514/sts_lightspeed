@@ -4,6 +4,7 @@
 #include "combat/BattleContext.h"
 #include "game/GameContext.h"
 #include "sim/search/Action.h"
+#include "sim/PublicCombatResampling.h"
 using namespace sts;
 namespace {
 int checks = 0, failures = 0;
@@ -167,9 +168,55 @@ void necroExhaust() {
     gc.deck.obtain(gc, Card(CardId::NECRONOMICURSE)); gc.deck.obtain(gc, Card(CardId::PRIDE));
     check(gc.deck.getTransformableCount() == 1, "Necro excluded, Pride eligible for master-deck selection");
 }
+void publicCopyOrder() {
+    const std::array<std::uint64_t,7> seeds {11,22,33,44,55,66,77};
+    for (int copies : {1, 2, 4}) {
+        Fixture f;
+        f.bc.cards.publicKnownBottomIds = {100,101};
+        f.bc.addToBot(Actions::MakeTempCardInDrawPile(CardInstance(CardId::PRIDE), copies, false)); f.resolve();
+        check(f.bc.cards.publicKnownBottomIds == std::vector<int>({100,101}) && !f.bc.cards.publicBottomOrderUncertain,
+              "deterministic top generation preserves known bottom");
+        check(f.bc.cards.publicKnownTopIds.size() == std::size_t(copies), "all generated top identities recorded");
+        auto a = f.bc, b = f.bc;
+        std::reverse(b.cards.drawPile.begin()+2, b.cards.drawPile.begin()+12);
+        public_sampling::resampleCombatContinuation(f.game, a, seeds);
+        public_sampling::resampleCombatContinuation(f.game, b, seeds);
+        for (std::size_t i = 0; i < a.cards.drawPile.size(); ++i)
+            check(a.cards.drawPile[i].uniqueId == b.cards.drawPile[i].uniqueId, "paired hidden permutation identical public sample");
+        for (int i = 0; i < copies; ++i)
+            check(a.cards.drawPile[12+i].uniqueId == f.bc.cards.publicKnownTopIds[i], "known top suffix not shuffled");
+        f.bc.addToBot(Actions::DrawCards(1)); f.resolve();
+        check(f.bc.cards.publicKnownTopIds.size() == std::size_t(copies-1), "drawing only consumes last known top ID");
+        f.hand(CardId::STRIKE_RED); f.bc.chooseForethoughtCard(f.bc.cards.cardsInHand-1);
+        check(f.bc.cards.publicKnownTopIds.size() == std::size_t(copies-1) && !f.bc.cards.publicTopOrderUncertain,
+              "selected bottom placement preserves remaining top suffix");
+        if (copies > 1) {
+            const auto uid = f.bc.cards.publicKnownTopIds.front();
+            auto it = std::find_if(f.bc.cards.drawPile.begin(), f.bc.cards.drawPile.end(), [=](const auto &c) { return c.uniqueId == uid; });
+            const auto selected = *it;
+            f.bc.cards.removeFromDrawPileAtIdx(int(it-f.bc.cards.drawPile.begin())); f.bc.moveToHandHelper(selected);
+            check(f.bc.cards.publicKnownTopIds.size() == std::size_t(copies-2), "retrieval removes only selected known identity");
+        }
+    }
+    Fixture random; random.bc.cards.createTempCardOnDrawTop(random.card(CardId::PRIDE));
+    random.bc.cards.createTempCardInDrawPile(0, random.card(CardId::WOUND));
+    check(random.bc.cards.publicTopOrderUncertain && random.bc.cards.publicKnownTopIds.empty(), "random insertion marks previous public constraints unsupported");
+    bool refused = false;
+    try { public_sampling::resampleCombatContinuation(random.game, random.bc, seeds); }
+    catch (const std::runtime_error &) { refused = true; }
+    check(refused, "uncertain top sampling refused");
+    random.bc.addToBot(Actions::ShuffleDrawPile()); random.resolve();
+    check(!random.bc.cards.publicTopOrderUncertain && random.bc.cards.publicKnownTopIds.empty(), "full shuffle clears knowledge and uncertainty");
+    Fixture turn; for (int i = 0; i < 7; ++i) turn.hand(CardId::PRIDE);
+    search::Action(search::ActionType::END_TURN).execute(turn.bc);
+    check(turn.bc.cards.publicKnownTopIds.size() == 2, "seven end-hand copies leave two known after five normal draws");
+    const auto ids = turn.bc.cards.publicKnownTopIds;
+    public_sampling::resampleCombatContinuation(turn.game, turn.bc, seeds);
+    check(turn.bc.cards.drawPile.back().uniqueId == ids.back(), "post-turn root preserves remaining generated top");
+}
 }
 int main() {
-    prideTraitsAndUse(); prideReplication(); necroExhaust(); sharedTopGeneration();
+    prideTraitsAndUse(); prideReplication(); necroExhaust(); sharedTopGeneration(); publicCopyOrder();
     std::cout << "REPLICATING_CURSE_FOUNDATION " << failures << " failures / " << checks << " checks\n";
     return failures ? 1 : 0;
 }

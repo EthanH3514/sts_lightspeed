@@ -43,6 +43,9 @@ namespace sts {
         // Public knowledge from selected bottom placements; bottom-first IDs.
         std::vector<int> publicKnownBottomIds;
         bool publicBottomOrderUncertain = false;
+        // Public deterministic generation suffix, bottom-to-top identities.
+        std::vector<int> publicKnownTopIds;
+        bool publicTopOrderUncertain = false;
         // Soul movement completion resets temporary costs, not immediately on discard.
         // Internal lifecycle bookkeeping; copied with a rollout, never policy input.
         std::vector<int> pendingDiscardCostResets;
@@ -57,6 +60,7 @@ namespace sts {
 
         void createDeckCardInstanceInDrawPile(const Card &card, int deckIdx, int drawIdx);
         void createTempCardInDrawPile(int insertIdx, CardInstance c);
+        void createTempCardOnDrawTop(CardInstance c);
         void createTempCardInDiscard(CardInstance c);
         void createTempCardInHand(CardInstance c);
 

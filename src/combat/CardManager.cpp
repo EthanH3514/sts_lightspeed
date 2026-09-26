@@ -30,6 +30,8 @@ void CardManager::init(const sts::GameContext &gc, BattleContext &bc) {
     discardPile.clear();
     exhaustPile.clear();
     pendingDiscardCostResets.clear();
+    publicKnownTopIds.clear();
+    publicTopOrderUncertain = false;
 
     int normalCount = 0;
     bool isInnateMemo[Deck::MAX_SIZE];
@@ -86,6 +88,8 @@ void CardManager::createDeckCardInstanceInDrawPile(const Card &card, int deckIdx
 }
 
 void CardManager::createTempCardInDrawPile(int idx, CardInstance c) {
+    if (!publicKnownTopIds.empty()) publicTopOrderUncertain = true;
+    publicKnownTopIds.clear();
     if (!publicKnownBottomIds.empty()) publicBottomOrderUncertain = true;
     publicKnownBottomIds.clear();
 #ifdef sts_asserts
@@ -116,6 +120,14 @@ void CardManager::createTempCardInDiscard(CardInstance c) {
     notifyAddCardToCombat(c);
     notifyAddToDiscardPile(c);
     discardPile.push_back(c);
+}
+
+void CardManager::createTempCardOnDrawTop(CardInstance c) {
+    c.uniqueId = static_cast<std::int16_t>(nextUniqueCardId++);
+    notifyAddCardToCombat(c);
+    notifyAddToDrawPile(c);
+    drawPile.push_back(c);
+    publicKnownTopIds.push_back(c.uniqueId);
 }
 
 void CardManager::createTempCardInHand(CardInstance c) {
@@ -189,6 +201,8 @@ void CardManager::moveToExhaustPile(const CardInstance &c) {
 
 
 void CardManager::insertToDrawPile(int drawPileIdx, const CardInstance &c) {
+    if (!publicKnownTopIds.empty()) publicTopOrderUncertain = true;
+    publicKnownTopIds.clear();
     if (!publicKnownBottomIds.empty()) publicBottomOrderUncertain = true;
     publicKnownBottomIds.clear();
 #ifdef sts_asserts
@@ -205,6 +219,7 @@ void CardManager::insertToDrawPile(int drawPileIdx, const CardInstance &c) {
 }
 
 void CardManager::moveToDrawPileTop(const CardInstance &c) {
+    publicKnownTopIds.push_back(c.uniqueId);
 #ifdef sts_asserts
     if (c.getId() == CardId::INVALID) {
         std::cerr << *g_debug_bc << '\n';
@@ -275,6 +290,8 @@ void CardManager::moveDiscardPileIntoToDrawPile() {
 
     discardPileBloodCardCount = 0;
     discardPile.clear();
+    // This helper transfers shuffled discard cards, not public selected moves.
+    publicKnownTopIds.clear();
 }
 
 // **************** END Move Methods ****************
@@ -358,6 +375,8 @@ void CardManager::notifyAddToDrawPile(const CardInstance &c) {
 }
 
 void CardManager::notifyRemoveFromDrawPile(const CardInstance &c) {
+    publicKnownTopIds.erase(std::remove(publicKnownTopIds.begin(),
+        publicKnownTopIds.end(), c.uniqueId), publicKnownTopIds.end());
     publicKnownBottomIds.erase(std::remove(publicKnownBottomIds.begin(),
         publicKnownBottomIds.end(), c.uniqueId), publicKnownBottomIds.end());
     if (c.isBloodCard()) {

@@ -3103,10 +3103,14 @@ void BattleContext::chooseForethoughtCard(int handIdx) {
     }
 
     auto knownBottom = cards.publicKnownBottomIds;
+    auto knownTop = cards.publicKnownTopIds;
+    const bool topUncertain = cards.publicTopOrderUncertain;
     const bool uncertain = cards.publicBottomOrderUncertain;
     knownBottom.insert(knownBottom.begin(), cards.hand[handIdx].uniqueId);
     cards.insertToDrawPile(0, cards.hand[handIdx]);
     cards.publicKnownBottomIds = std::move(knownBottom);
+    cards.publicKnownTopIds = std::move(knownTop);
+    cards.publicTopOrderUncertain = topUncertain;
     cards.publicBottomOrderUncertain = uncertain;
     cards.removeFromHandAtIdx(handIdx);
 }

@@ -169,6 +169,9 @@ pybind::dict battleState(const BattleContext &battle) {
     result["times_damaged"] = battle.player.timesDamagedThisCombat;
     result["public_known_bottom_ids"] = battle.cards.publicKnownBottomIds;
     result["bottom_knowledge_tracked"] = true;
+    result["public_known_top_ids"] = battle.cards.publicKnownTopIds;
+    result["top_knowledge_schema"] = 1;
+    result["top_order_uncertain"] = battle.cards.publicTopOrderUncertain;
     result["bottom_order_uncertain"] = battle.cards.publicBottomOrderUncertain;
     result["input_state"] = inputStateName(battle.inputState);
     if (battle.inputState == InputState::CARD_SELECT) {
@@ -1353,4 +1356,3 @@ PYBIND11_MODULE(slaythespire, m) {
 }
 
 // os.add_dll_directory("C:\\Program Files\\mingw-w64\\x86_64-8.1.0-posix-seh-rt_v6-rev0\\mingw64\\bin")
-

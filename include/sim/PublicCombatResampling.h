@@ -204,8 +204,14 @@ inline void resampleCombatContinuation(
         if (pile[i].uniqueId != bottom[i]) throw std::runtime_error("known bottom identity mismatch");
     }
     auto unknownBegin = pile.begin() + bottom.size();
-    auto unknownEnd = pile.end();
-    if (knownDrawTopUniqueId >= 0 && unknownBegin != unknownEnd) {
+    const auto &top = battle.cards.publicKnownTopIds;
+    if (battle.cards.publicTopOrderUncertain) throw std::runtime_error("top order after random insertion is unsupported");
+    if (top.size() > pile.size()) throw std::runtime_error("invalid known top size");
+    for (std::size_t i = 0; i < top.size(); ++i) {
+        if (pile[pile.size()-top.size()+i].uniqueId != top[i]) throw std::runtime_error("known top identity mismatch");
+    }
+    auto unknownEnd = pile.begin() + std::max(bottom.size(), pile.size()-top.size());
+    if (top.empty() && knownDrawTopUniqueId >= 0 && unknownBegin != unknownEnd) {
         --unknownEnd;
     }
     if (!frozenEye) {
