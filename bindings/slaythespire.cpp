@@ -307,14 +307,17 @@ public:
         return clone;
     }
 
-    std::unique_ptr<SimulatorSession> resampleCombat(const std::array<std::uint64_t, 7> &seeds) const {
+    std::unique_ptr<SimulatorSession> resampleCombat(
+        const std::array<std::uint64_t, 7> &seeds, int knownDrawTopUniqueId = -1
+    ) const {
         ensureReady();
         if (!simulator->battleSim.initialized) {
             throw std::runtime_error("an initialized combat is required");
         }
         auto clone = cloneExact();
         public_sampling::resampleCombatContinuation(
-            *clone->simulator->gc, *clone->simulator->battleSim.bc, seeds
+            *clone->simulator->gc, *clone->simulator->battleSim.bc, seeds,
+            knownDrawTopUniqueId
         );
         clone->combatOnly = true;
         return clone;
@@ -476,7 +479,8 @@ PYBIND11_MODULE(slaythespire, m) {
     pybind11::class_<SimulatorSession>(m, "SimulatorSession")
         .def(pybind11::init<>())
         .def("clone_exact", &SimulatorSession::cloneExact)
-        .def("resample_combat", &SimulatorSession::resampleCombat, pybind11::arg("seeds"))
+        .def("resample_combat", &SimulatorSession::resampleCombat,
+             pybind11::arg("seeds"), pybind11::arg("known_draw_top_unique_id") = -1)
         .def("reset", &SimulatorSession::reset, pybind11::arg("character"), pybind11::arg("seed"), pybind11::arg("ascension"))
         .def("get_state", &SimulatorSession::getState)
         .def("get_observation", &SimulatorSession::getObservation)

@@ -177,7 +177,7 @@ inline void validateEncounterRecipe(const BattleContext &battle) {
 // Caller must reject roots with unsupported previously revealed order constraints.
 inline void resampleCombatContinuation(
     const GameContext &game, BattleContext &battle,
-    const std::array<std::uint64_t, 7> &seeds
+    const std::array<std::uint64_t, 7> &seeds, int knownDrawTopUniqueId = -1
 ) {
     if (game.screenState != ScreenState::BATTLE ||
         battle.outcome != Outcome::UNDECIDED || battle.inputState != InputState::PLAYER_NORMAL ||
@@ -189,8 +189,18 @@ inline void resampleCombatContinuation(
     }
     validateEncounterRecipe(battle);
     const bool frozenEye = game.hasRelic(RelicId::FROZEN_EYE);
+    auto &pile = battle.cards.drawPile;
+    if (knownDrawTopUniqueId >= 0 &&
+        (pile.empty() || pile.back().uniqueId != knownDrawTopUniqueId)) {
+        throw std::runtime_error("known public draw-pile top does not match native state");
+    }
+    auto unknownEnd = pile.end();
+    if (knownDrawTopUniqueId >= 0) {
+        --unknownEnd;
+    }
     if (!frozenEye) {
-        for (const auto &card : battle.cards.drawPile) {
+        for (auto it = pile.begin(); it != unknownEnd; ++it) {
+            const auto &card = *it;
             const int idx = card.uniqueId;
             if (idx >= 0 && idx < game.deck.size() &&
                 (game.deck.cards[idx].isInnate() ||
@@ -207,14 +217,13 @@ inline void resampleCombatContinuation(
     battle.potionRng = Random(seeds[4]);
     battle.shuffleRng = Random(seeds[5]);
     if (!frozenEye) {
-        auto &pile = battle.cards.drawPile;
-        std::sort(pile.begin(), pile.end(), [](const CardInstance &a, const CardInstance &b) {
+        std::sort(pile.begin(), unknownEnd, [](const CardInstance &a, const CardInstance &b) {
             return std::tie(a.id, a.upgraded, a.specialData, a.cost, a.costForTurn,
                             a.freeToPlayOnce, a.retain, a.uniqueId) <
                    std::tie(b.id, b.upgraded, b.specialData, b.cost, b.costForTurn,
                             b.freeToPlayOnce, b.retain, b.uniqueId);
         });
-        java::Collections::shuffle(pile.begin(), pile.end(), java::Random(seeds[6]));
+        java::Collections::shuffle(pile.begin(), unknownEnd, java::Random(seeds[6]));
     }
 }
 }
