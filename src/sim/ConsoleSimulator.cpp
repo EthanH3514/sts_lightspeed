@@ -537,11 +537,7 @@ void ConsoleSimulator::takeRewardScreenAction(const std::string &action) {
         gc->playerIncreaseMaxHp(2);
         r.removeCardReward(takeIdx);
     } else if (takeType == "relic") {
-        gc->obtainRelic(r.relics[takeIdx]);
-        if (r.sapphireKey && takeIdx == r.relicCount-1) {
-            r.sapphireKey = false;
-        }
-        r.removeRelicReward(takeIdx);
+        gc->obtainRewardRelic(takeIdx);
 
     } else if (takeType == "emeraldKey") {
         gc->obtainKey(Key::EMERALD_KEY);
@@ -676,9 +672,11 @@ void ConsoleSimulator::printEventActions(std::ostream &os) const {
         case Event::COLOSSEUM: { // The Colosseum
             if (gc->info.eventData == 0) {
                 os << "0: [Fight]\n";
-            } else {
+            } else if (gc->info.eventData == 1) {
                 os << "0: [COWARDICE] Escape.\n";
                 os << "1: [VICTORY] A powerful fight with many rewards.\n";
+            } else {
+                os << "0: [Leave]\n";
             }
             break;
         }

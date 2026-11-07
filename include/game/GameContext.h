@@ -149,7 +149,7 @@ namespace sts {
 
         sts::Card noteForYourselfCard = Card(CardId::IRON_WAVE);
 
-        static constexpr bool disableColosseum = true;
+        static constexpr bool disableColosseum = false;
         static constexpr bool disableMatchAndKeep = true;
         static constexpr bool disablePrismaticShard = true;
         bool skipBattles = false;
@@ -273,7 +273,8 @@ namespace sts {
         void enterBossTreasureRoom();
         void enterAct3VictoryRoom();
         void enterBattle(MonsterEncounter encounter);
-        void afterBattle();
+        void afterBattle(bool escaped = false);
+        bool hasEliteCombatTrigger() const;
 
         // actions
         void obtainCard(Card c, int count=1);
@@ -281,6 +282,7 @@ namespace sts {
         void obtainKey(Key key);
         void obtainPotion(Potion p);
         bool obtainRelic(RelicId r);
+        void obtainRewardRelic(int idx);
 
         RelicId returnRandomRelic(RelicTier tier, bool shopRoom=false, bool fromFront=true);
         RelicId returnNonCampfireRelic(RelicTier tier, bool shopRoom=false);

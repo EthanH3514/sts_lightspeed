@@ -365,11 +365,7 @@ void executeRewardsAction(GameContext &gc, const search::GameAction a) {
             break;
 
         case search::GameAction::RewardsActionType::RELIC:
-            gc.obtainRelic(r.relics[a.getIdx1()]);
-            r.removeRelicReward(a.getIdx1());
-            if (a.getIdx1() == r.relicCount-1) {
-                r.sapphireKey = false;
-            }
+            gc.obtainRewardRelic(a.getIdx1());
             break;
 
         case search::GameAction::RewardsActionType::SKIP:
@@ -715,11 +711,7 @@ int search::GameAction::getValidEventSelectBits(const GameContext &gc) {
             }
 
         case Event::COLOSSEUM:
-            if (gc.info.eventData == 0) { // first phase
-                return 0x1;
-            } else {
-                return 0x3;
-            }
+            return gc.info.eventData == 1 ? 0x3 : 0x1;
 
         case Event::CURSED_TOME:
             switch (gc.info.eventData) { // event phase
