@@ -860,6 +860,7 @@ void GameContext::setupEvent() { // todo necronomicon event
             openCardSelectScreen(CardSelectScreenType::BONFIRE_SPIRITS, 1);
             break;
 
+        case Event::COLOSSEUM:
         case Event::CURSED_TOME:
             info.eventData = 0;
             break;
@@ -1122,9 +1123,20 @@ void GameContext::enterBattle(MonsterEncounter encounter) {
     }
 }
 
-void GameContext::afterBattle() {
+bool GameContext::hasEliteCombatTrigger() const {
+    // An event battle can trigger elite relics without being an elite room.
+    return curRoom == Room::ELITE || (curRoom == Room::EVENT &&
+            curEvent == Event::COLOSSEUM && info.encounter == MonsterEncounter::COLOSSEUM_EVENT_NOBS);
+}
+
+void GameContext::afterBattle(bool escaped) {
     if (hasRelic(RelicId::FACE_OF_CLERIC)) {
         playerIncreaseMaxHp(1);
+    }
+
+    if (escaped && !(curRoom == Room::EVENT && curEvent == Event::COLOSSEUM)) {
+        returnToMapAction(*this);
+        return;
     }
 
     switch (curRoom) {
@@ -1179,7 +1191,27 @@ void GameContext::afterBattle() {
             break;
 
         case Room::EVENT:
-            if (curEvent == Event::MYSTERIOUS_SPHERE) { // todo gold from golden idol?
+            if (curEvent == Event::COLOSSEUM) {
+                // The first fight has rewardAllowed=false. AbstractRoom still
+                // rolls its potion drop, but the event never offers that reward.
+                auto reward = info.rewardsContainer;
+                addPotionRewards(reward);
+                if (info.eventData == 0) {
+                    info.rewardsContainer.clear();
+                    info.eventData = 1;
+                    screenState = ScreenState::EVENT_SCREEN;
+                    regainControlAction = returnToMapAction;
+                } else if (escaped) {
+                    info.rewardsContainer.clear();
+                    returnToMapAction(*this);
+                } else {
+                    // eliteTrigger does not change the room's card reward rarity
+                    // or grant Black Star's MonsterRoomElite-only extra relic.
+                    reward.addCardReward(createCardReward(Room::EVENT));
+                    openCombatRewardScreen(reward);
+                    regainControlAction = returnToMapAction;
+                }
+            } else if (curEvent == Event::MYSTERIOUS_SPHERE) { // todo gold from golden idol?
                 Rewards reward;
                 reward.addGold(info.gold);
                 reward.addRelic(info.bossRelics[0]);
@@ -1283,6 +1315,26 @@ void upgradeRandomCardsMatching(GameContext &gc, CardType type) {
     }
 }
 
+
+void GameContext::obtainRewardRelic(int idx) {
+    auto &reward = info.rewardsContainer;
+    const auto relic = reward.relics[idx];
+    if (reward.sapphireKey && idx == reward.relicCount - 1) {
+        reward.sapphireKey = false;
+    }
+    reward.removeRelicReward(idx);
+    const auto remaining = reward;
+    const auto returnAction = regainControlAction;
+    if (obtainRelic(relic)) {
+        // A selector or nested reward screen owns control only until it closes.
+        // Capture values: cloned branches must not point back into this state.
+        regainControlAction = [remaining, returnAction](GameContext &gc) {
+            gc.info.rewardsContainer = remaining;
+            gc.screenState = ScreenState::REWARDS;
+            gc.regainControlAction = returnAction;
+        };
+    }
+}
 
 // relics with screens will call regainControl() after obtaining a relic with a screen
 bool GameContext::obtainRelic(RelicId r) {
@@ -2561,8 +2613,27 @@ void GameContext::chooseEventOption(int idx) {
             break;
         }
 
-        case Event::COLOSSEUM: // todo
-            regainControl();
+        case Event::COLOSSEUM:
+            if (info.eventData == 0 && idx == 0) {
+                info.rewardsContainer.clear();
+                regainControlAction = [](GameContext& gc) { gc.afterBattle(); };
+                enterBattle(MonsterEncounter::COLOSSEUM_EVENT_SLAVERS);
+            } else if (info.eventData == 1 && idx == 1) {
+                info.eventData = 2;
+                // Predetermined rewards are generated before combat, in original
+                // rare/uncommon/gold order, and survive exact session copies.
+                Rewards reward;
+                reward.addRelic(returnRandomRelic(RelicTier::RARE));
+                reward.addRelic(returnRandomRelic(RelicTier::UNCOMMON));
+                reward.addGold(hasRelic(RelicId::GOLDEN_IDOL) ? 125 : 100);
+                info.rewardsContainer = reward;
+                regainControlAction = [](GameContext& gc) { gc.afterBattle(); };
+                enterBattle(MonsterEncounter::COLOSSEUM_EVENT_NOBS);
+            } else if (info.eventData != 0 && idx == 0) {
+                returnToMapAction(*this);
+            } else {
+                throw std::invalid_argument("Invalid Colosseum event choice");
+            }
             break;
 
         case Event::CURSED_TOME: {

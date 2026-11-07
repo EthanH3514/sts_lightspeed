@@ -39,10 +39,14 @@ void BattleContext::init(const GameContext &gc, MonsterEncounter encounterToInit
     encounter = encounterToInit;
 
     auto startRandom = Random(gc.seed+gc.floorNum);
-    aiRng = startRandom;
-    monsterHpRng = startRandom;
-    shuffleRng = startRandom;
-    cardRandomRng = startRandom;
+    // Colosseum reopens its event on the same floor. Its second fight must
+    // continue the streams saved by exitBattle, not restart the floor seeds.
+    const bool sameFloorContinuation = gc.curRoom == Room::EVENT &&
+        gc.curEvent == Event::COLOSSEUM && encounterToInit == MonsterEncounter::COLOSSEUM_EVENT_NOBS;
+    aiRng = sameFloorContinuation ? gc.aiRng : startRandom;
+    monsterHpRng = sameFloorContinuation ? gc.monsterHpRng : startRandom;
+    shuffleRng = sameFloorContinuation ? gc.shuffleRng : startRandom;
+    cardRandomRng = sameFloorContinuation ? gc.cardRandomRng : startRandom;
     miscRng = gc.miscRng;
     potionRng = gc.potionRng;
 
@@ -100,6 +104,7 @@ void BattleContext::initRelics(const GameContext &gc) {
     fixed_list<RelicId, 2> atTurnStartPostDraw;
 
     auto room = gc.curRoom;
+    const bool eliteTrigger = gc.hasEliteCombatTrigger();
 
     auto &p = player;
 
@@ -331,7 +336,7 @@ void BattleContext::initRelics(const GameContext &gc) {
                 break;
 
             case R::PRESERVED_INSECT:
-                if (room == Room::ELITE) {
+                if (eliteTrigger) {
                     for (int i = 0; i < monsters.monsterCount; ++i) {
                         Monster &m = monsters.arr[i];
                         m.curHp = static_cast<int>(m.maxHp * .75);
@@ -349,13 +354,13 @@ void BattleContext::initRelics(const GameContext &gc) {
                 break;
 
             case R::SLAVERS_COLLAR:
-                if (room == Room::ELITE || room == Room::BOSS) { // todo this needs to be set by eliteTrigger maybe?
+                if (eliteTrigger || room == Room::BOSS) {
                     p.energyPerTurn++;
                 }
                 break;
 
             case R::SLING_OF_COURAGE:
-                if (room == Room::ELITE) {
+                if (eliteTrigger) {
                     p.buff<PS::STRENGTH>(2);
                 }
                 break;
@@ -528,8 +533,12 @@ void BattleContext::exitBattle(GameContext &g) const {
         g.outcome = GameOutcome::PLAYER_LOSS;
     } else if (outcome == Outcome::PLAYER_ESCAPED) {
         g.info.stolenGold = 0;
-        g.screenState = ScreenState::MAP_SCREEN;
-        g.regainControlAction = nullptr;
+        if (g.curRoom == Room::EVENT && g.curEvent == Event::COLOSSEUM) {
+            g.afterBattle(true);
+        } else {
+            g.screenState = ScreenState::MAP_SCREEN;
+            g.regainControlAction = nullptr;
+        }
     } else {
         // player victory
         g.regainControl();
