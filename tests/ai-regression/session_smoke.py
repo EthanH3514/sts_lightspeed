@@ -24,6 +24,10 @@ def main():
                 original.reset(sim.CharacterClass.IRONCLAD, seed, ascension)
                 before = original.get_state()
                 before_actions = original.get_actions_text()
+                event = json.loads(original.public_event_context())
+                assert event == dict(version='public-event-context-v1', available=True,
+                                     event_name='NEOW', act=1, floor=0)
+                assert original.get_state() == before  # Export consumes no RNG.
                 assert before['run']['ascension'] == ascension
                 assert before['map']['nodes']
                 supplement = json.loads(original.public_run_supplement())
@@ -36,6 +40,7 @@ def main():
                 assert '0:' in before_actions
                 left, right = original.clone_exact(), original.clone_exact()
                 assert left.get_state() == before == right.get_state()
+                assert left.public_event_context() == original.public_event_context() == right.public_event_context()
                 left.take_action('0')
                 assert original.get_state() == before
                 assert original.get_actions_text() == before_actions
