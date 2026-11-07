@@ -1,3 +1,4 @@
+#include "sim/PublicTheftEvents.h"
 //
 // Created by gamerpuppy on 8/21/2021.
 //
@@ -6,6 +7,13 @@
 #include "game/Random.h"
 #include "combat/BattleContext.h"
 #include "game/GameContext.h"
+
+#ifdef SPIRE_AI_DRAW_EVENTS
+#include "draw_belief/SimulatorHooks.h"
+#else
+#define SPIRE_DRAW_GROUP(...)
+#define SPIRE_DRAW_REMOVED(...)
+#endif
 
 using namespace sts;
 
@@ -560,11 +568,10 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             break;
 
         case MMID::CENTURION_DEFEND: {
-            if (bc.monsters.getAliveCount() > 1) {
-                auto &mystic = bc.monsters.arr[1];
-                mystic.addBlock(asc17 ? 20 : 15);
-            }
-            rollMove(bc);
+            // Resolve the recipient when the action executes. If its ally died
+            // after Defend was announced, the original action blocks itself.
+            bc.addToBot(Actions::GainBlockRandomEnemy(idx, asc17 ? 20 : 15));
+            bc.addToBot(Actions::RollMove(idx));
             break;
         }
 
@@ -1015,6 +1022,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
         // ************ RED SLAVER ************
 
         case MMID::RED_SLAVER_ENTANGLE:
+            miscInfo = 1; // Used even when Artifact blocks the queued debuff.
             bc.addToBot(Actions::DebuffPlayer<PS::ENTANGLED>(1));
             bc.addToBot(Actions::RollMove(idx));
             break;
@@ -1437,7 +1445,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
         // ************ DARKLING ************
 
         case MMID::DARKLING_CHOMP:
-            attackPlayerHelper(bc, asc2 ? 9 : 8);
+            attackPlayerHelper(bc, asc2 ? 9 : 8, 2);
             bc.addToBot( Actions::RollMove(idx) );
             break;
 
@@ -1450,7 +1458,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             break;
 
         case MMID::DARKLING_NIP: {
-            const auto damage = miscInfo + (asc2 ? 2 : 0); // todo maybe make d part of the miscInfo at prebattle
+            const auto damage = miscInfo; // ascension is applied once when birth damage is sampled
             attackPlayerHelper(bc, damage);
             bc.addToBot( Actions::RollMove(idx) );
             break;
@@ -2181,9 +2189,12 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
             // 3 buff
 
             const auto healNeedAmt = asc17 ? 21 : 16;
-            const auto &knight = bc.monsters.arr[0];
-
-            if (maxHp-curHp >= healNeedAmt || knight.isAlive() && knight.maxHp-knight.curHp >= healNeedAmt) {
+            int missingHp = 0;
+            for (int i = 0; i < bc.monsters.monsterCount; ++i) {
+                const auto &ally = bc.monsters.arr[i];
+                if (!ally.isDeadOrEscaped()) missingHp += ally.maxHp - ally.curHp;
+            }
+            if (missingHp >= healNeedAmt && !lastTwoMoves(MMID::MYSTIC_HEAL)) {
                 return (MMID::MYSTIC_HEAL);
                 break;
             }
@@ -2668,17 +2679,17 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
                 break;
             }
 
-            int roll2 = 100;
+            int effectiveRoll = roll;
 
             if (roll < 20) {
                 if (!lastMove(MMID::SHELLED_PARASITE_FELL)) {
                     return (MMID::SHELLED_PARASITE_FELL);
                     break;
                 }
-                roll2 = bc.aiRng.random(20,99);
+                effectiveRoll = bc.aiRng.random(20,99);
             }
 
-            if (roll < 60 || roll2 < 60) {
+            if (effectiveRoll < 60) {
                 if (!lastTwoMoves(MMID::SHELLED_PARASITE_DOUBLE_STRIKE)) {
                     return (MMID::SHELLED_PARASITE_DOUBLE_STRIKE);
                 } else {
@@ -2782,7 +2793,7 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
             } else if (roll >= 75 && !usedEntangle) {
                 return (MMID::RED_SLAVER_ENTANGLE);
 
-            } else if (roll >= 50 && usedEntangle && !lastTwoMoves(MMID::RED_SLAVER_STAB)) {
+            } else if (roll >= 55 && usedEntangle && !lastTwoMoves(MMID::RED_SLAVER_STAB)) {
                 return (MMID::RED_SLAVER_STAB);
 
             } else if (!lastTwoMoves(MMID::RED_SLAVER_SCRAPE) || (asc17 && !lastMove(MMID::RED_SLAVER_SCRAPE))) {
@@ -3332,6 +3343,7 @@ void Monster::initSpawnedMonster(BattleContext &bc, const MonsterId monsterId, c
 
 void Monster::stealGoldFromPlayer(BattleContext &bc, int amount) {
     const auto theftAmount = std::min(static_cast<int>(bc.player.gold), amount);
+    public_sampling::observePublicTheft(bc, idx, bc.player.gold, bc.player.gold - theftAmount);
     if (theftAmount > 0) {
         miscInfo += theftAmount;
         bc.player.gold -= theftAmount;
@@ -3394,6 +3406,9 @@ void Monster::spawnBronzeOrbs(BattleContext &bc) {
 
     auto &orb1 = bc.monsters.arr[0];
     auto &orb2 = bc.monsters.arr[2];
+
+    ++orb1.publicGeneration;
+    ++orb2.publicGeneration;
 
     orb1.construct(bc, MonsterId::BRONZE_ORB, 0);
     orb2.construct(bc, MonsterId::BRONZE_ORB, 2);
@@ -3464,6 +3479,7 @@ int stasisHelper(Random &rng, ForwardIt begin, ForwardIt end) {
 
 void Monster::stasisAction(BattleContext &bc) {
     auto &cards = bc.cards;
+    SPIRE_DRAW_GROUP(cards);
     if (cards.drawPile.empty() && cards.discardPile.empty()) {
         return; // do nothing
     }
@@ -3483,6 +3499,7 @@ void Monster::stasisAction(BattleContext &bc) {
         );
 
         stasisCard = cards.drawPile[removeIdx];
+        SPIRE_DRAW_REMOVED(cards, stasisCard, HighestRarity);
         cards.removeFromDrawPileAtIdx(removeIdx);
     }
 
@@ -3543,7 +3560,9 @@ void Monster::reptomancerSummon(BattleContext &bc, int daggerCount) {
     for (int i = 0; i < daggerCount; ++i) {
         const auto daggerIdx = daggerIdxs[i];
         auto &dagger = bc.monsters.arr[daggerIdx];
+        const int generation = dagger.publicGeneration + 1;
         dagger = Monster();
+        dagger.publicGeneration = generation;
         dagger.construct(bc, MonsterId::DAGGER, daggerIdx);
         ++bc.monsters.monstersAlive;
         dagger.setMove(MMID::DAGGER_STAB);

@@ -65,6 +65,7 @@ namespace sts {
         bool canPickAnyNumber = false;
         int pickCount = 0;
         int data0 = 0;
+        CardType discoveryType = CardType::INVALID;
 
         CardSelectTask cardSelectTask;
 

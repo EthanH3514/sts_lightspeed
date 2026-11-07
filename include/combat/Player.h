@@ -13,6 +13,7 @@
 #define STS_AI_PLAYER_H
 
 #include <iostream>
+#include <algorithm>
 #include <vector>
 #include <cstdint>
 #include <bitset>
@@ -21,6 +22,7 @@
 #include <constants/CharacterClasses.h>
 #include <constants/Relics.h>
 #include <constants/PlayerStatusEffects.h>
+#include "combat/PowerInstances.h"
 
 // powers that use justApplied:
 // Vulnerable, requires isSourceMonster and actionManager turn has ended
@@ -56,7 +58,9 @@ namespace sts {
         std::uint32_t justAppliedBits = 0;
         std::uint64_t statusBits0 = 0;
         std::uint32_t statusBits1 = 0;
-        std::map<PlayerStatus, std::int16_t> statusMap;
+        // One lifecycle/order registry for the reviewed callback families.
+        PowerInstances powerInstances;
+        std::map<PlayerStatus, int> statusMap;
 
         std::uint64_t relicBits0 = 0;
         std::uint64_t relicBits1 = 0;
@@ -71,7 +75,7 @@ namespace sts {
         int8_t  sundialCounter = 0;
         bool haveUsedNecronomiconThisTurn = false;
 
-        int8_t  combustHpLoss = 0;
+        int combustHpLoss = 0;
         int16_t  devaFormEnergyPerTurn = 0;
         int8_t  echoFormCardsDoubled = 0;
         int8_t  panacheCounter = 0;
@@ -86,9 +90,6 @@ namespace sts {
         int16_t lastAttackUnblockedDamage = 0;
         int16_t timesDamagedThisCombat = 0;
 
-        int8_t bomb1 = 0;
-        int8_t bomb2 = 0;
-        int8_t bomb3 = 0;
 
         template <RelicId r> void setHasRelic(bool value);
         template <PlayerStatus> void setHasStatus(bool value);
@@ -244,6 +245,13 @@ namespace sts {
         }
 
         //static_assert(((int)s) < 64); // did we add too many status effects
+        if (!value && s == PS::DRAW_REDUCTION && hasStatus<s>()) ++cardDrawPerTurn;
+        if (value) powerInstances.activate(s);
+        else powerInstances.remove(s);
+        if (value && (s == PS::BARRICADE || s == PS::CORRUPTION ||
+                s == PS::CONFUSED || s == PS::PEN_NIB || s == PS::SURROUNDED))
+            statusMap[s] = -1;
+        if (value && s == PS::HEX) statusMap[s] = 1;
         int idx = static_cast<int>(s);
         if (value) {
             if (idx < 64) {
@@ -320,7 +328,7 @@ namespace sts {
                 return;
 
             case PS::STRENGTH:
-                strength += amount;
+                strength = std::clamp(strength + amount, -999, 999);
                 return;
 
             default:
@@ -328,7 +336,7 @@ namespace sts {
         }
 
         if (s == PS::THE_BOMB) {
-            bomb3 += amount;
+            powerInstances.add(s, 3, amount);
             return;
         }
 
@@ -348,6 +356,9 @@ namespace sts {
 
         if (s == PS::COMBUST) {
             ++combustHpLoss;
+        }
+        if (s == PS::PANACHE && !hasStatus<s>()) {
+            panacheCounter = 5;
         }
 
         if (hasStatus<s>()) {
@@ -384,14 +395,17 @@ namespace sts {
         }
 
         if (s == PlayerStatus::DRAW_REDUCTION) {
-            --cardDrawPerTurn;
-            setJustApplied<PS::DRAW_REDUCTION>(true);
+            if (!hasStatus<s>()) {
+                --cardDrawPerTurn; // Amount is duration, not cards lost per draw.
+                setJustApplied<PS::DRAW_REDUCTION>(true);
+            }
+            statusMap[s] = getStatus<s>() + amount;
             setHasStatus<PS::DRAW_REDUCTION>(true);
             return;
         }
 
         if (s == PlayerStatus::STRENGTH) {
-            strength += amount;
+            strength = std::clamp(strength + amount, -999, 999);
             return;
         }
         if (s == PlayerStatus::DEXTERITY) {

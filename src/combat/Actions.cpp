@@ -6,6 +6,19 @@
 #include "combat/BattleContext.h"
 #include "game/Game.h"
 
+#ifdef SPIRE_AI_DRAW_EVENTS
+#include "draw_belief/SimulatorHooks.h"
+#else
+#define SPIRE_DRAW_SHUFFLE(...)
+#define SPIRE_DRAW_IMPORT(...)
+#define SPIRE_DRAW_GAP(...)
+#define SPIRE_DRAW_ATTRIBUTE_MAP(...)
+#define SPIRE_DRAW_LEGACY_GAP(...)
+#define SPIRE_DRAW_GROUP(...)
+#define SPIRE_DRAW_REMOVED(...)
+#define SPIRE_DISCOVERY_EVENT(battle, type) sts::generateDiscoveryCards((battle).cardRandomRng, (battle).player.cc, type)
+#endif
+
 using namespace sts;
 
 Action Actions::SetState(InputState state) {
@@ -178,13 +191,20 @@ Action Actions::DrawCards(int amount) {
     }};
 }
 
+#ifdef SPIRE_AI_DRAW_EVENTS
+#include "draw_belief/EventShuffle.h"
+#endif
+
 Action Actions::EmptyDeckShuffle() {
     return {[=] (BattleContext &bc) {
-        java::Collections::shuffle(
-                bc.cards.discardPile.begin(),
-                bc.cards.discardPile.end(),
-                java::Random(bc.shuffleRng.randomLong())
-        );
+        if (bc.player.hasRelic<RelicId::FROZEN_EYE>()) SPIRE_DRAW_LEGACY_GAP(bc.cards, "full_order_reveal_required");
+        SPIRE_DRAW_IMPORT(bc.cards);
+        const auto shuffleSeed = bc.shuffleRng.randomLong();
+#ifdef SPIRE_AI_DRAW_EVENTS
+        if (!spire_belief::trace::conditionalShuffleEvent(bc.cards))
+#endif
+            java::Collections::shuffle(bc.cards.discardPile.begin(),
+                bc.cards.discardPile.end(), java::Random(shuffleSeed));
 
         bc.cards.moveDiscardPileIntoToDrawPile();
     }};
@@ -192,6 +212,9 @@ Action Actions::EmptyDeckShuffle() {
 
 Action Actions::ShuffleDrawPile() {
     return {[=] (BattleContext &bc) {
+        if (bc.player.hasRelic<RelicId::FROZEN_EYE>()) SPIRE_DRAW_LEGACY_GAP(bc.cards, "full_order_reveal_required");
+        SPIRE_DRAW_SHUFFLE(bc.cards);
+        bc.cards.clearPublicDrawOrder();
         java::Collections::shuffle(
                 bc.cards.drawPile.begin(),
                 bc.cards.drawPile.end(),
@@ -204,8 +227,7 @@ Action Actions::ShuffleTempCardIntoDrawPile(CardId id, int count) {
     return {[=] (BattleContext &bc) {
         CardInstance c(id);
         for (int i = 0; i < count; ++i) {
-            const int idx = bc.cards.drawPile.empty() ? 0 : bc.cardRandomRng.random(static_cast<int>(bc.cards.drawPile.size()-1));
-            bc.cards.createTempCardInDrawPile(idx, c);
+            bc.cards.createTempCardShuffledIntoDrawPile(bc.cardRandomRng, c);
         }
     }};
 }
@@ -241,10 +263,12 @@ Action Actions::MakeTempCardInDrawPile(const CardInstance &c, int amount, bool s
     return {[=](BattleContext &bc) {
         for (int i = 0; i < amount; ++i) {
             if (shuffleInto) {
-                const int idx = bc.cards.drawPile.empty() ? 0 : bc.cardRandomRng.random(static_cast<int>(bc.cards.drawPile.size()-1));
-                bc.cards.createTempCardInDrawPile(idx, c);
+                bc.cards.createTempCardShuffledIntoDrawPile(bc.cardRandomRng, c);
             }
-            // todo else
+            else {
+                // Non-random generation places each new identity on top.
+                bc.cards.createTempCardOnDrawTop(c);
+            }
         }
     }};
 }
@@ -478,8 +502,12 @@ Action Actions::SummonGremlins() {
         auto &gremlin0 = bc.monsters.arr[newGremlinIdxs[0]];
         auto &gremlin1 = bc.monsters.arr[newGremlinIdxs[1]];
 
+        const int generation0 = gremlin0.publicGeneration + 1;
+        const int generation1 = gremlin1.publicGeneration + 1;
         gremlin0 = Monster();
         gremlin1 = Monster();
+        gremlin0.publicGeneration = generation0;
+        gremlin1.publicGeneration = generation1;
 
         gremlin0.construct(bc, MonsterGroup::getGremlin(bc.aiRng), newGremlinIdxs[0]);
         gremlin1.construct(bc, MonsterGroup::getGremlin(bc.aiRng), newGremlinIdxs[1]);
@@ -494,6 +522,10 @@ Action Actions::SummonGremlins() {
 
         gremlin0.rollMove(bc);
         gremlin1.rollMove(bc);
+        // SummonGremlinAction calls usePreBattleAction on the new individual.
+        // In particular Mad Gremlins need Angry just like the starting minions.
+        gremlin0.preBattleAction(bc);
+        gremlin1.preBattleAction(bc);
     }};
 }
 
@@ -508,7 +540,9 @@ Action Actions::SpawnTorchHeads() {
         for (int i = 0; i < spawnCount; ++i) {
             const auto idx = spawnIdxs[i];
             auto &torchHead = bc.monsters.arr[idx];
+            const int generation = torchHead.publicGeneration + 1;
             torchHead = Monster();
+            torchHead.publicGeneration = generation;
             torchHead.construct(bc, MonsterId::TORCH_HEAD, idx);
             torchHead.initHp(bc.monsterHpRng, bc.ascension); // bug somewhere in game
             torchHead.setMove(MMID::TORCH_HEAD_TACKLE);
@@ -543,20 +577,22 @@ Action Actions::OnAfterCardUsed() {
     }, false};
 }
 
-Action Actions::PutRandomCardsInDrawPile(CardType type, int count) {
-    return {[=] (BattleContext &bc) {
-        CardId ids[5];
-        for (int i = 0; i < count; ++i) {
-            ids[i] = getTrulyRandomCardInCombat(bc.cardRandomRng, bc.player.cc, type);
-        }
-
-        for (int i = 0; i < count; ++i) {
-            CardInstance card(ids[i], false);
+Action Actions::PutRandomCardsInDrawPile(BattleContext &bc, CardType type, int count) {
+    // The cards select their identities during use; random insertion is queued.
+    std::vector<CardInstance> cards;
+    for (int i = 0; i < count; ++i) {
+        const auto id = getTrulyRandomCardInCombat(bc.cardRandomRng, bc.player.cc, type);
+        CardInstance card(id, false);
+        // Chrysalis/Metamorphosis only lower positive costs; X stays X.
+        if (card.cost > 0) {
             card.cost = 0;
             card.costForTurn = 0;
-
-            const int idx = bc.cards.drawPile.empty() ? 0 : bc.cardRandomRng.random(static_cast<int>(bc.cards.drawPile.size()-1));
-            bc.cards.createTempCardInDrawPile(idx, card);
+        }
+        cards.push_back(card);
+    }
+    return {[=] (BattleContext &bc) {
+        for (const auto &card : cards) {
+            bc.cards.createTempCardShuffledIntoDrawPile(bc.cardRandomRng, card);
         }
     }};
 }
@@ -564,28 +600,31 @@ Action Actions::PutRandomCardsInDrawPile(CardType type, int count) {
 Action Actions::DiscoveryAction(CardType type, int amount) {
     return {[=] (BattleContext &bc) {
         bc.haveUsedDiscoveryAction = true;
-        bc.openDiscoveryScreen(sts::generateDiscoveryCards(bc.cardRandomRng, bc.player.cc, type), amount);
+        bc.openDiscoveryScreen(SPIRE_DISCOVERY_EVENT(bc, type), amount);
+        bc.cardSelectInfo.discoveryType = type;
     }};
 }
 
-Action Actions::InfernalBladeAction() {
-    return {[=] (BattleContext &bc) {
-        const auto cid = getTrulyRandomCardInCombat(bc.cardRandomRng, bc.player.cc, CardType::ATTACK);
-        CardInstance c(cid);
-        c.setCostForTurn(0);
-        bc.addToTop( Actions::MakeTempCardInHand(c) );
-    }};
+Action Actions::InfernalBladeAction(BattleContext &bc) {
+    // Select during card use; only insertion is deferred.
+    const auto cid = getTrulyRandomCardInCombat(bc.cardRandomRng, bc.player.cc, CardType::ATTACK);
+    CardInstance c(cid);
+    // BloodForBlood.makeCopy inherits the combat's prior positive HP-loss events.
+    if (cid == CardId::BLOOD_FOR_BLOOD) {
+        c.updateCost(-bc.player.timesDamagedThisCombat);
+    }
+    c.setCostForTurn(0);
+    return Actions::MakeTempCardInHand(c);
 }
 
-Action Actions::JackOfAllTradesAction(bool upgraded) {
-    return {[=] (BattleContext &bc) {
-        const auto c1 = sts::getTrulyRandomColorlessCardInCombat(bc.cardRandomRng);
-        bc.addToTop( Actions::MakeTempCardInHand(c1) );
-        if (upgraded) {
-            auto c2 = sts::getTrulyRandomColorlessCardInCombat(bc.cardRandomRng);
-            bc.addToTop( Actions::MakeTempCardInHand(c2) );
-        }
-    }};
+Action Actions::JackOfAllTradesAction(BattleContext &bc, bool upgraded) {
+    std::vector<CardInstance> cards;
+    cards.emplace_back(sts::getTrulyRandomColorlessCardInCombat(bc.cardRandomRng));
+    if (upgraded) {
+        cards.emplace_back(sts::getTrulyRandomColorlessCardInCombat(bc.cardRandomRng));
+    }
+    // Preserve selection order, including which card overflows a full hand.
+    return Actions::MakeTempCardsInHand(cards);
 }
 
 Action Actions::TransmutationAction(bool upgraded, int energy, bool useEnergy) {
@@ -613,6 +652,7 @@ Action Actions::TransmutationAction(bool upgraded, int energy, bool useEnergy) {
 
 Action Actions::ViolenceAction(int count) { // todo a faster algorithm for inserting into the attack list
     return {[=] (BattleContext &bc) {
+        SPIRE_DRAW_GROUP(bc.cards);
         fixed_list<int,CardManager::MAX_GROUP_SIZE> attackIdxList;
         for (int i = 0; i < bc.cards.drawPile.size(); ++i) {
             const auto &c = bc.cards.drawPile[i];
@@ -636,7 +676,7 @@ Action Actions::ViolenceAction(int count) { // todo a faster algorithm for inser
         int i = 0;
         for (; i < count; ++i) {
             if (attackIdxList.size()-i <= 0) {
-                return;
+                break;
             }
 
             java::Collections::shuffle(attackIdxList.begin()+i, attackIdxList.end(), java::Random(bc.shuffleRng.randomLong()));
@@ -644,6 +684,7 @@ Action Actions::ViolenceAction(int count) { // todo a faster algorithm for inser
             removeIdxs[i] = removeIdx;
 
             const auto &c = bc.cards.drawPile[removeIdx];
+            SPIRE_DRAW_REMOVED(bc.cards, c, Attack);
             if (bc.cards.cardsInHand == 10) {
                 bc.cards.moveToDiscardPile(c);
             } else {
@@ -660,17 +701,17 @@ Action Actions::ViolenceAction(int count) { // todo a faster algorithm for inser
     }};
 }
 
-// todo the amount should be the copies put into the hand 2 if have sacred bark and liquid memories
 Action Actions::BetterDiscardPileToHandAction(int amount, CardSelectTask task) {
     return {[=] (BattleContext &bc) {
-        if (bc.cards.discardPile.empty()) {
+        if (bc.cards.discardPile.empty() || amount <= 0) {
             return;
         }
-        if (bc.cards.discardPile.size() == 1) {
-            const int idx = 0;
-            bc.chooseDiscardToHandCard(0, task==CardSelectTask::LIQUID_MEMORIES_POTION);
+        if (static_cast<int>(bc.cards.discardPile.size()) <= amount) {
+            const int count = std::min(static_cast<int>(bc.cards.discardPile.size()), 10 - bc.cards.cardsInHand);
+            for (int i = 0; i < count; ++i)
+                bc.chooseDiscardToHandCard(0, task == CardSelectTask::LIQUID_MEMORIES_POTION);
         } else {
-            bc.openSimpleCardSelectScreen(task, 1);
+            bc.openSimpleCardSelectScreen(task, amount);
         }
     }};
 }
@@ -787,22 +828,15 @@ Action Actions::ForethoughtAction(bool upgraded) {
             return;
         }
 
-        // todo implement Upgraded version
-//        //
-//        if (upgraded) {
-//            bc.cardSelectInfo.cardSelectTask = CardSelectTask::FORETHOUGHT;
-//            bc.cardSelectInfo.canPickAnyNumber = true;
-//            bc.inputState = InputState::CARD_SELECT;
-//
-//        } else {
-        if (bc.cards.cardsInHand == 1) {
+        if (!upgraded && bc.cards.cardsInHand == 1) {
             bc.chooseForethoughtCard(0);
         } else {
             bc.cardSelectInfo.cardSelectTask = CardSelectTask::FORETHOUGHT;
-            bc.cardSelectInfo.canPickAnyNumber = false;
+            bc.cardSelectInfo.canPickAnyNumber = upgraded;
+            bc.cardSelectInfo.canPickZero = upgraded;
+            bc.cardSelectInfo.pickCount = upgraded ? bc.cards.cardsInHand : 1;
             bc.inputState = InputState::CARD_SELECT;
         }
-//        }
 
 
     }};
@@ -901,7 +935,9 @@ Action Actions::TimeEaterPlayCardQueueItem(const CardQueueItem &x) {
 Action Actions::UpgradeAllCardsInHand() {
     return {[=] (BattleContext &bc) {
         for (int i = 0; i < bc.cards.cardsInHand; ++i) {
-            bc.cards.hand[i].upgrade();
+            if (bc.cards.hand[i].canUpgrade()) {
+                bc.cards.hand[i].upgrade();
+            }
         }
     }};
 }
@@ -966,12 +1002,16 @@ Action Actions::CodexAction() {
         bc.inputState = InputState::CARD_SELECT;
         bc.cardSelectInfo.cardSelectTask = CardSelectTask::CODEX;
         bc.cardSelectInfo.codexCards() =
+                bc.player.cc == CharacterClass::IRONCLAD ? SPIRE_DISCOVERY_EVENT(bc, CardType::INVALID) :
                 generateDiscoveryCards(bc.cardRandomRng, CharacterClass::IRONCLAD, CardType::INVALID);
     }};
 }
 
 Action Actions::ExhaustMany(int limit) {
     return {[=] (BattleContext &bc) {
+        if (bc.cards.cardsInHand == 0) {
+            return;
+        }
         bc.inputState = InputState::CARD_SELECT;
         bc.cardSelectInfo.cardSelectTask = CardSelectTask::EXHAUST_MANY;
         bc.cardSelectInfo.pickCount = limit;
@@ -989,9 +1029,10 @@ Action Actions::ToolboxAction() {
     return {[] (BattleContext &bc) {
         bc.inputState = InputState::CARD_SELECT;
         bc.cardSelectInfo.cardSelectTask = CardSelectTask::DISCOVERY;
+        bc.cardSelectInfo.discoveryType = CardType::STATUS; // Public colorless pool descriptor.
         bc.cardSelectInfo.discovery_CopyCount() = 1;
         bc.cardSelectInfo.discovery_Cards() =
-                generateDiscoveryCards(bc.cardRandomRng, bc.player.cc, CardType::STATUS); // status is mapped to colorless
+                SPIRE_DISCOVERY_EVENT(bc, CardType::STATUS); // status is mapped to colorless
     }};
 }
 
@@ -1004,6 +1045,7 @@ Action Actions::DualityAction() {
 
 Action Actions::ApotheosisAction() {
     return {[](BattleContext &bc) {
+        SPIRE_DRAW_ATTRIBUTE_MAP(bc.cards, UpgradeEligible);
 
         for (int i = 0; i < bc.cards.cardsInHand; ++i) {
             auto &c = bc.cards.hand[i];
@@ -1054,7 +1096,6 @@ Action Actions::EnlightenmentAction(bool upgraded) {
                 c.costForTurn = 1;
             }
             if (upgraded && c.cost > 1) {
-                c.costForTurn = 1;
                 c.cost = 1;
             }
         }
@@ -1106,7 +1147,7 @@ Action Actions::HandOfGreedAction(int idx, int damage, bool upgraded) {
         if (m.isDeadOrEscaped()) {
             return;
         }
-        bc.monsters.arr[idx].damage(bc, damage);
+        bc.monsters.arr[idx].attacked(bc, damage);
 
         const bool effectTriggered = !m.hasStatus<MS::MINION>()
                 && !m.isAlive()
@@ -1123,7 +1164,12 @@ Action Actions::HandOfGreedAction(int idx, int damage, bool upgraded) {
 
 Action Actions::LimitBreakAction() {
     return {[] (BattleContext &bc) {
-        bc.player.buff<PS::STRENGTH>(bc.player.getStatus<PS::STRENGTH>());
+        const int strength = bc.player.getStatus<PS::STRENGTH>();
+        if (strength < 0) {
+            bc.player.debuff<PS::STRENGTH>(strength, false);
+        } else {
+            bc.player.buff<PS::STRENGTH>(strength);
+        }
     }};
 }
 
@@ -1167,7 +1213,7 @@ Action Actions::RitualDaggerAction(int idx, int damage) {
             const auto upgradeAmt = c.isUpgraded() ? 5 : 3;
 
             if (bc.curCardQueueItem.purgeOnUse) {
-                bc.cards.findAndUpgradeSpecialData(c.uniqueId, upgradeAmt);
+                bc.cards.findAndUpgradeSpecialData(c.uniqueId, upgradeAmt, bc.curCardQueueItem.publicTraceSource);
             }
             c.specialData += upgradeAmt;
         }
@@ -1200,10 +1246,10 @@ Action Actions::SecondWindAction(int blockPerCard) {
 
 Action Actions::SeverSoulExhaustAction() {
     return {[=] (BattleContext &bc) {
-        for (int i = bc.cards.cardsInHand-1; i >= 0; --i) {
+        for (int i = 0; i < bc.cards.cardsInHand; ++i) {
             const auto &c = bc.cards.hand[i];
             if (c.getType() != CardType::ATTACK) {
-                bc.addToBot( Actions::ExhaustSpecificCardInHand(i, c.getUniqueId()) );
+                bc.addToTop( Actions::ExhaustSpecificCardInHand(i, c.getUniqueId()) );
             }
         }
     }};

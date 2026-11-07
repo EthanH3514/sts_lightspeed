@@ -39,7 +39,7 @@ bool Deck::isCardBottled(int idx) const {
 }
 
 bool Deck::anyCardBottled() const {
-    return bottleIdxs[0] == -1 || bottleIdxs[1] == -1 || bottleIdxs[2] == -1;
+    return bottleIdxs[0] != -1 || bottleIdxs[1] != -1 || bottleIdxs[2] != -1;
 }
 
 int Deck::getUpgradeableCount() const {
@@ -191,8 +191,6 @@ void Deck::obtain(GameContext &gc, Card card, int count) {
 
 void Deck::obtainRaw(Card card) {
     cards.push_back(card);
-    ++transformableCount;
-    ++cardTypeCounts[static_cast<int>(card.getType())];
 
     switch (card.getType()) {
         case CardType::ATTACK:
@@ -331,4 +329,3 @@ fixed_list<int, Deck::MAX_SIZE> Deck::getUpgradeableCardIdxs() const {
     }
     return ret;
 }
-

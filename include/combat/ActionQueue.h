@@ -7,7 +7,7 @@
 
 #include "sts_common.h"
 
-#include <bitset>
+#include <vector>
 #include <functional>
 #include <cassert>
 
@@ -34,23 +34,27 @@ namespace sts {
         int front = 0;
         int back = 0;
         int size = 0;
-        std::bitset<capacity> bits; // for the shouldClear field
+        static_assert(capacity > 0, "queue initial capacity must be positive");
+        std::vector<bool> bits = std::vector<bool>(capacity); // clear on victory
+        std::vector<ActionFunction> arr = std::vector<ActionFunction>(capacity);
 
-#ifdef sts_action_queue_use_raw_array
-        ActionFunction arr[capacity];
-        ActionQueue() = default;
-        ActionQueue(const ActionQueue &rhs) : size(rhs.size), back(rhs.back), front(rhs.front), bits(rhs.bits) {
-            int cur = rhs.front;
-            for (int i = 0; i < rhs.size; ++i) {
-                if (cur >= capacity) {
-                    cur = 0;
-                }
-                arr[cur] = rhs.arr[cur];
+        // Capacity is storage, not a gameplay limit. Preserve both FIFO order and
+        // victory-cleanup flags when a wrapped queue grows. Value copies own storage.
+        void reserveOne() {
+            if (size < getCapacity()) return;
+            const int oldCapacity = getCapacity();
+            std::vector<ActionFunction> grown(oldCapacity * 2);
+            std::vector<bool> grownBits(oldCapacity * 2);
+            for (int i = 0; i < size; ++i) {
+                const int old = (front + i) % oldCapacity;
+                grown[i] = std::move(arr[old]);
+                grownBits[i] = bits[old];
             }
+            arr.swap(grown);
+            bits.swap(grownBits);
+            front = 0;
+            back = size;
         }
-#else
-        std::array<ActionFunction,capacity> arr;
-#endif
 
         void clear();
         void pushFront(Action a);
@@ -69,29 +73,23 @@ namespace sts {
 
     template <int capacity>
     void ActionQueue<capacity>::pushFront(Action a) {
-#ifdef sts_asserts
-        assert(size != capacity);
-#endif
+        reserveOne();
         --front;
         ++size;
         if (front < 0) {
-            front = capacity-1;
+            front = getCapacity()-1;
         }
-        bits.set(front, a.clearOnCombatVictory);
+        bits[front] = a.clearOnCombatVictory;
         arr[front] = std::move(a.actFunc);
     }
 
     template<int capacity>
     void ActionQueue<capacity>::pushBack(Action a) {
-#ifdef sts_asserts
-        if (size >= capacity) {
-            assert(false);
-        }
-#endif
-        if (back >= capacity) {
+        reserveOne();
+        if (back >= getCapacity()) {
             back = 0;
         }
-        bits.set(back, a.clearOnCombatVictory);
+        bits[back] = a.clearOnCombatVictory;
         arr[back] = std::move(a.actFunc);
         ++back;
         ++size;
@@ -107,10 +105,10 @@ namespace sts {
 #ifdef sts_asserts
         assert(size > 0 );
 #endif
-        ActionFunction a = arr[front];
+        ActionFunction a = std::move(arr[front]);
         ++front;
         --size;
-        if (front >= capacity) {
+        if (front >= getCapacity()) {
             front = 0;
         }
         return a;
@@ -118,7 +116,7 @@ namespace sts {
 
     template<int capacity>
     int ActionQueue<capacity>::getCapacity() const {
-        return capacity;
+        return static_cast<int>(arr.size());
     }
 
 }

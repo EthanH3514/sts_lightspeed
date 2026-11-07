@@ -587,6 +587,10 @@ void ConsoleSimulator::printCardSelectScreenActions(std::ostream &os) const {
             os << "Remove.";
             break;
 
+        case CardSelectScreenType::DUPLICATE:
+            os << "Duplicate.";
+            break;
+
         case CardSelectScreenType::OBTAIN:
             os << "Obtain.";
             break;
@@ -754,7 +758,7 @@ void ConsoleSimulator::printEventActions(std::ostream &os) const {
                     }
                 } else {
                     if (gc->deck.getTransformableCount(2) >= 2) { // todo the requirement for this could be too strict
-                        os << "3: [Clean Up] Lose " << goldCost1 << " Gold. Transform 2 random cards.\n";
+                        os << "3: [Clean Up] Lose " << goldCost1 << " Gold. Choose and Transform 2 cards in your deck.\n";
                     }
                 }
             }
@@ -806,7 +810,7 @@ void ConsoleSimulator::printEventActions(std::ostream &os) const {
             bool haveNoOptions =
                     gc->info.skillCardDeckIdx == -1 &&
                     gc->info.powerCardDeckIdx == -1 &&
-                    gc->info.powerCardDeckIdx == -1;
+                    gc->info.attackCardDeckIdx == -1;
 
             if (haveNoOptions) {
                 os << "3: [Splat] Lose nothing?\n";
@@ -1102,7 +1106,7 @@ void ConsoleSimulator::printEventActions(std::ostream &os) const {
 
         case Event::WORLD_OF_GOOP: {
             os << "0: [Gather Gold] Gain 75 Gold. Lose 11 HP.\n";
-            os << "1: [Leave It] Lose some gold.\n";
+            os << "1: [Leave It] Lose " << gc->info.goldLoss << " Gold.\n";
             break;
         }
 

@@ -10,9 +10,39 @@
 
 #include "sim/search/BattleScumSearcher2.h"
 
+#ifdef SPIRE_AI_DRAW_EVENTS
+#include "draw_belief/SimulatorHooks.h"
+#else
+#define SPIRE_DRAW_GAP(...)
+#define SPIRE_DRAW_CARD(...)
+#define SPIRE_DRAW_OPERATION(...)
+#define SPIRE_DRAW_ATTRIBUTE_MAP(...)
+#define SPIRE_DRAW_NEW_CARD(...)
+#define SPIRE_DRAW_NEW_OPERATION(...)
+#define SPIRE_DRAW_OPENING(...)
+#define SPIRE_DRAW_EXPOSE(...)
+#define SPIRE_DRAW_DISCARD(...)
+#define SPIRE_DRAW_SETTLE(...)
+#define SPIRE_DRAW_BEGIN_OBSERVATION(...)
+#define SPIRE_DRAW_END_OBSERVATION(...)
+#define SPIRE_DRAW_LEGACY_GAP(...)
+#define SPIRE_DRAW_COPY_CHANGE(...)
+#endif
+
 using namespace sts;
 
+void CardManager::clearPublicDrawOrder() {
+    SPIRE_DRAW_GAP(*this, "unclassified_order_reset");
+    publicKnownTopIds.clear();
+    publicTopOrderUncertain = false;
+    publicKnownBottomIds.clear();
+    publicBottomOrderUncertain = false;
+    publicOpeningPriorityIds.clear();
+    publicOpeningOrderUncertain = false;
+}
+
 void CardManager::init(const sts::GameContext &gc, BattleContext &bc) {
+    SPIRE_DRAW_OPENING(*this, gc);
 
 //    masterDeckSize = gc.deck.size();
     nextUniqueCardId = gc.deck.size();
@@ -29,6 +59,8 @@ void CardManager::init(const sts::GameContext &gc, BattleContext &bc) {
     drawPile.resize(gc.deck.size());
     discardPile.clear();
     exhaustPile.clear();
+    pendingDiscardCostResets.clear();
+    clearPublicDrawOrder();
 
     int normalCount = 0;
     bool isInnateMemo[Deck::MAX_SIZE];
@@ -55,6 +87,7 @@ void CardManager::init(const sts::GameContext &gc, BattleContext &bc) {
 
         if (isInnateMemo[i]) {
             createDeckCardInstanceInDrawPile(deckCard, deckIdx, innateIdx);
+            publicOpeningPriorityIds.push_back(deckIdx);
             ++innateIdx;
         } else {
             createDeckCardInstanceInDrawPile(deckCard, deckIdx, normalIdx);
@@ -62,6 +95,8 @@ void CardManager::init(const sts::GameContext &gc, BattleContext &bc) {
         }
     }
 
+    // Membership is public; never publish or retain its private shuffled order.
+    std::sort(publicOpeningPriorityIds.begin(), publicOpeningPriorityIds.end());
     int innateCount =  innateIdx - normalCount;
     if (innateCount  > bc.player.cardDrawPerTurn) {
         bc.addToBot( Actions::DrawCards(innateCount-bc.player.cardDrawPerTurn) );
@@ -69,6 +104,7 @@ void CardManager::init(const sts::GameContext &gc, BattleContext &bc) {
 }
 
 void CardManager::createDeckCardInstanceInDrawPile(const Card &card, int deckIdx, int drawIdx) {
+    SPIRE_DRAW_GAP(*this, "opening_requires_new_anchor");
     auto &c = drawPile[drawIdx];
     c = CardInstance(card);
     c.setUniqueId(deckIdx);
@@ -85,6 +121,12 @@ void CardManager::createDeckCardInstanceInDrawPile(const Card &card, int deckIdx
 }
 
 void CardManager::createTempCardInDrawPile(int idx, CardInstance c) {
+    SPIRE_DRAW_GAP(*this, "unclassified_insertion");
+    if (!publicOpeningPriorityIds.empty()) publicOpeningOrderUncertain = true;
+    if (!publicKnownTopIds.empty()) publicTopOrderUncertain = true;
+    publicKnownTopIds.clear();
+    if (!publicKnownBottomIds.empty()) publicBottomOrderUncertain = true;
+    publicKnownBottomIds.clear();
 #ifdef sts_asserts
     if (c.getId() == CardId::INVALID) {
         std::cerr << *g_debug_bc << '\n';
@@ -113,6 +155,16 @@ void CardManager::createTempCardInDiscard(CardInstance c) {
     notifyAddCardToCombat(c);
     notifyAddToDiscardPile(c);
     discardPile.push_back(c);
+    SPIRE_DRAW_EXPOSE(*this, c);
+}
+
+void CardManager::createTempCardOnDrawTop(CardInstance c) {
+    SPIRE_DRAW_NEW_CARD(*this, PutTop, c);
+    c.uniqueId = static_cast<std::int16_t>(nextUniqueCardId++);
+    notifyAddCardToCombat(c);
+    notifyAddToDrawPile(c);
+    drawPile.push_back(c);
+    publicKnownTopIds.push_back(c.uniqueId);
 }
 
 void CardManager::createTempCardInHand(CardInstance c) {
@@ -128,17 +180,20 @@ void CardManager::createTempCardInHand(CardInstance c) {
     notifyAddCardToCombat(c);
     notifyAddToHand(c);
     hand[cardsInHand++] = c;
+    SPIRE_DRAW_EXPOSE(*this, c);
 }
 
 // **************** START Remove Methods ****************
 
 void CardManager::removeFromDrawPileAtIdx(int idx) {
+    SPIRE_DRAW_GAP(*this, "missing_selector_contract");
     notifyRemoveFromDrawPile(drawPile[idx]);
     drawPile.erase(drawPile.begin()+idx);
 }
 
 CardInstance CardManager::popFromDrawPile() {
     auto c = drawPile.back();
+    SPIRE_DRAW_CARD(*this, Draw, c);
     notifyRemoveFromDrawPile(c);
     drawPile.pop_back();
     return c;
@@ -172,6 +227,7 @@ void CardManager::removeFromExhaustPile(int idx) {
 // **************** START Move Methods ****************
 
 void CardManager::moveToHand(const CardInstance &c) {
+    SPIRE_DRAW_EXPOSE(*this, c);
 #ifdef sts_asserts
     assert(cardsInHand < 10);
 #endif
@@ -186,6 +242,12 @@ void CardManager::moveToExhaustPile(const CardInstance &c) {
 
 
 void CardManager::insertToDrawPile(int drawPileIdx, const CardInstance &c) {
+    SPIRE_DRAW_GAP(*this, "unclassified_insertion");
+    if (!publicOpeningPriorityIds.empty()) publicOpeningOrderUncertain = true;
+    if (!publicKnownTopIds.empty()) publicTopOrderUncertain = true;
+    publicKnownTopIds.clear();
+    if (!publicKnownBottomIds.empty()) publicBottomOrderUncertain = true;
+    publicKnownBottomIds.clear();
 #ifdef sts_asserts
     if (c.getId() == CardId::INVALID) {
         std::cerr << *g_debug_bc << '\n';
@@ -200,6 +262,8 @@ void CardManager::insertToDrawPile(int drawPileIdx, const CardInstance &c) {
 }
 
 void CardManager::moveToDrawPileTop(const CardInstance &c) {
+    SPIRE_DRAW_CARD(*this, PutTop, c);
+    publicKnownTopIds.push_back(c.uniqueId);
 #ifdef sts_asserts
     if (c.getId() == CardId::INVALID) {
         std::cerr << *g_debug_bc << '\n';
@@ -212,16 +276,56 @@ void CardManager::moveToDrawPileTop(const CardInstance &c) {
     drawPile.push_back(c);
 }
 
-void CardManager::shuffleIntoDrawPile(Random &cardRandomRng, const CardInstance &c) {
+void CardManager::notePublicRandomInsertion() {
+    // CardGroup.addToRandomSpot never inserts above the existing top. Do not
+    // inspect the chosen private index to decide what public knowledge survives.
+    if (!publicOpeningPriorityIds.empty()) publicOpeningOrderUncertain = true;
+    if (publicKnownTopIds.size() > 1) {
+        publicTopOrderUncertain = true;
+        const auto top = publicKnownTopIds.back();
+        publicKnownTopIds.assign(1, top);
+    }
+    if (!publicKnownBottomIds.empty()) publicBottomOrderUncertain = true;
+    publicKnownBottomIds.clear();
+}
+
+void CardManager::createTempCardShuffledIntoDrawPile(Random &rng, CardInstance c) {
+    SPIRE_DRAW_NEW_OPERATION(*this, InsertBelowTop, c);
     if (drawPile.empty()) {
+        clearPublicDrawOrder();
+        createTempCardOnDrawTop(c);
+        return;
+    }
+    notePublicRandomInsertion();
+    const int idx = rng.random(static_cast<int>(drawPile.size() - 1));
+    c.uniqueId = static_cast<std::int16_t>(nextUniqueCardId++);
+    notifyAddCardToCombat(c);
+    notifyAddToDrawPile(c);
+    drawPile.insert(drawPile.begin() + idx, c);
+}
+
+void CardManager::moveToDrawPileBottom(const CardInstance &c) {
+    SPIRE_DRAW_CARD(*this, PutBottom, c);
+    publicKnownBottomIds.insert(publicKnownBottomIds.begin(), c.uniqueId);
+    notifyAddToDrawPile(c);
+    drawPile.insert(drawPile.begin(), c);
+}
+
+void CardManager::shuffleIntoDrawPile(Random &cardRandomRng, const CardInstance &c) {
+    SPIRE_DRAW_OPERATION(*this, InsertBelowTop, c);
+    if (drawPile.empty()) {
+        clearPublicDrawOrder();
         moveToDrawPileTop(c);
     } else {
+        notePublicRandomInsertion();
         int idx = cardRandomRng.random(static_cast<int>(drawPile.size()-1));
-        insertToDrawPile(idx, c);
+        notifyAddToDrawPile(c);
+        drawPile.insert(drawPile.begin() + idx, c);
     }
 }
 
 void CardManager::moveToDiscardPile(const CardInstance &c) {
+    SPIRE_DRAW_DISCARD(*this, c);
     // todo check flurries, weave
 #ifdef sts_asserts
     if (c.getId() == CardId::INVALID) {
@@ -233,21 +337,62 @@ void CardManager::moveToDiscardPile(const CardInstance &c) {
 #endif
     notifyAddToDiscardPile(c);
     discardPile.push_back(c);
+    if (std::find(pendingDiscardCostResets.begin(), pendingDiscardCostResets.end(),
+                  c.uniqueId) == pendingDiscardCostResets.end()) {
+        pendingDiscardCostResets.push_back(c.uniqueId);
+    }
+}
+
+void CardManager::settleDiscardCosts() {
+    if (pendingDiscardCostResets.empty()) return;
+    SPIRE_DRAW_SETTLE(*this);
+    // Per-copy movement identity is not yet represented by the public labels.
+    for (const auto &c : drawPile) {
+        if (c.costForTurn != c.cost && std::find(pendingDiscardCostResets.begin(),
+                pendingDiscardCostResets.end(), c.uniqueId) != pendingDiscardCostResets.end()) {
+            SPIRE_DRAW_LEGACY_GAP(*this, "per_copy_cost_reset");
+        }
+    }
+    // Soul retains the original card even when another action has already moved it.
+    // Reset only moved identities, using their CURRENT combat cost. In particular,
+    // untouched temporary discounts and freeToPlayOnce are not movement resets.
+    const auto settle = [this](CardInstance &c) {
+        if (std::find(pendingDiscardCostResets.begin(), pendingDiscardCostResets.end(),
+                      c.uniqueId) != pendingDiscardCostResets.end()) {
+            c.costForTurn = c.cost;
+        }
+    };
+    for (int i = 0; i < cardsInHand; ++i) settle(hand[i]);
+    for (auto &c : drawPile) settle(c);
+    for (auto &c : discardPile) settle(c);
+    for (auto &c : exhaustPile) settle(c);
+    pendingDiscardCostResets.clear();
 }
 
 void CardManager::moveDiscardPileIntoToDrawPile() {
+    SPIRE_DRAW_GAP(*this, "unclassified_discard_transfer");
     if (drawPile.empty()) {
+        clearPublicDrawOrder();
         drawPileBloodCardCount = discardPileBloodCardCount;
         drawPile = discardPile;
 
     } else {
+        // A shuffled prefix above an existing pile is not a full shuffle. The
+        // legacy edge-only sampler cannot express even Bag(A) ++ Bag(B).
+        const bool imports = !discardPile.empty();
         for (const auto &c : discardPile) {
             moveToDrawPileTop(c);
+        }
+        if (imports) {
+            publicKnownTopIds.clear();
+            publicTopOrderUncertain = true;
+            if (!publicOpeningPriorityIds.empty()) publicOpeningOrderUncertain = true;
         }
     }
 
     discardPileBloodCardCount = 0;
     discardPile.clear();
+    // Known bottom constraints survive a nonempty-prefix transfer.
 }
 
 // **************** END Move Methods ****************
@@ -331,6 +476,13 @@ void CardManager::notifyAddToDrawPile(const CardInstance &c) {
 }
 
 void CardManager::notifyRemoveFromDrawPile(const CardInstance &c) {
+    publicOpeningPriorityIds.erase(std::remove(publicOpeningPriorityIds.begin(),
+        publicOpeningPriorityIds.end(), c.uniqueId), publicOpeningPriorityIds.end());
+    if (publicOpeningPriorityIds.empty()) publicOpeningOrderUncertain = false;
+    publicKnownTopIds.erase(std::remove(publicKnownTopIds.begin(),
+        publicKnownTopIds.end(), c.uniqueId), publicKnownTopIds.end());
+    publicKnownBottomIds.erase(std::remove(publicKnownBottomIds.begin(),
+        publicKnownBottomIds.end(), c.uniqueId), publicKnownBottomIds.end());
     if (c.isBloodCard()) {
         --drawPileBloodCardCount;
     }
@@ -378,6 +530,7 @@ int CardManager::getRandomCardIdxInHand(Random &rng) {
 }
 
 void CardManager::resetAttributesAtEndOfTurn() {
+    SPIRE_DRAW_ATTRIBUTE_MAP(*this, ResetTurnCosts);
     for (int i = 0; i < cardsInHand; ++i) {
         hand[i].setCostForTurn(hand[i].cost);
     }
@@ -394,10 +547,19 @@ void CardManager::resetAttributesAtEndOfTurn() {
 // **************** BEGIN SPECIAL HELPERS ****************
 
 void CardManager::draw(BattleContext &bc, int amount) {
+    // Pre-randomization costs would reveal which indistinguishable copy was
+    // drawn. Until a coarsened observation kernel exists, export no such label.
+    if (amount > 0 && bc.player.hasStatus<PS::CONFUSED>()) {
+        SPIRE_DRAW_LEGACY_GAP(*this, "confused_draw_observation");
+    }
+    if (amount > 0 && bc.player.hasStatus<PS::CORRUPTION>()) {
+        SPIRE_DRAW_LEGACY_GAP(*this, "transformed_draw_observation");
+    }
     int evolve = bc.player.getStatus<PS::EVOLVE>();
     int fireBreathing = bc.player.getStatus<PS::FIRE_BREATHING>();
 
     for (int i = 0; i < amount; i++) {
+        SPIRE_DRAW_BEGIN_OBSERVATION(*this);
         auto c = popFromDrawPile();
 
         if (bc.player.hasStatus<PS::CONFUSED>()) {
@@ -417,15 +579,23 @@ void CardManager::draw(BattleContext &bc, int amount) {
             }
 
         } else if (c.getType() == CardType::STATUS) {
-            if (evolve) {
-                bc.addToBot( Actions::DrawCards(evolve) );
-            }
-            if (fireBreathing) {
-                bc.addToBot( Actions::DamageAllEnemy(fireBreathing) );
+            for (const auto &power : bc.player.powerInstances.ordered(PowerPhase::StatusDraw)) {
+                switch (power.type) {
+                    case PS::FIRE_BREATHING:
+                        if (fireBreathing) bc.addToBot(Actions::DamageAllEnemy(fireBreathing));
+                        break;
+                    case PS::EVOLVE:
+                        if (evolve) bc.addToBot(Actions::DrawCards(evolve));
+                        break;
+                    default: break;
+                }
             }
             if (c.getId() == CardId::VOID) {
-                // game adds action to bottom of the queue but I think it is ok to do directly
-                bc.player.energy = std::max(0, bc.player.energy-1);
+                // Void.triggerWhenDrawn queues LoseEnergyAction after existing
+                // effects (for example Sundial's gain from the same shuffle).
+                bc.addToBot({[](BattleContext &context) {
+                    context.player.energy = std::max(0, context.player.energy - 1);
+                }});
             }
 
         } else if (c.getType() == CardType::CURSE) {
@@ -435,6 +605,7 @@ void CardManager::draw(BattleContext &bc, int amount) {
 
         }
 
+        SPIRE_DRAW_END_OBSERVATION(c, bc);
         // do we need to check this?
         if (cardsInHand < 10) {
             moveToHand(c);
@@ -446,6 +617,7 @@ void CardManager::draw(BattleContext &bc, int amount) {
 }
 
 void CardManager::onTookDamage() {
+    SPIRE_DRAW_ATTRIBUTE_MAP(*this, DamageCosts);
     // this method will fail catastrophically if the bloodCardCounts are not correct
     const bool hasAnyBloodCards = handBloodCardCount | drawPileBloodCardCount | discardPileBloodCardCount;
     if (!hasAnyBloodCards) {
@@ -488,7 +660,8 @@ void upgrade(CardInstance &c, int upgradeAmount) {
 }
 
 // for ritual dagger, rampage
-void CardManager::findAndUpgradeSpecialData(const std::int16_t uniqueId, const int upgradeAmount) {
+void CardManager::findAndUpgradeSpecialData(const std::int16_t uniqueId, const int upgradeAmount, std::uint64_t publicReference) {
+    SPIRE_DRAW_COPY_CHANGE(*this, publicReference, upgradeAmount);
 
     // special checks for most common scenarios
     if (!discardPile.empty() && discardPile.back().uniqueId == uniqueId) {
@@ -518,6 +691,7 @@ void CardManager::findAndUpgradeSpecialData(const std::int16_t uniqueId, const i
 
     for (auto & c : drawPile) {
         if (c.uniqueId == uniqueId) {
+            SPIRE_DRAW_LEGACY_GAP(*this, "per_copy_attribute_change");
             upgrade(c, upgradeAmount);
             return;
         }
@@ -534,39 +708,21 @@ void CardManager::findAndUpgradeSpecialData(const std::int16_t uniqueId, const i
 }
 
 void CardManager::onBuffCorruption() {
-    // game does modifyCostForCombat here but I don't think its necessary as skills cant cost more than 4?
-    for (int i = 0; i < cardsInHand; ++i) {
-        auto &c = hand[i];
-        if (c.getType() == CardType::SKILL && c.cost > 0) {
-            c.cost = 0;
+    SPIRE_DRAW_ATTRIBUTE_MAP(*this, CorruptionCosts);
+    // ApplyPowerAction uses modifyCostForCombat(-9), not an unconditional zero.
+    const auto modifySkill = [](CardInstance &c) {
+        if (c.getType() != CardType::SKILL) return;
+        if (c.costForTurn > 0) {
+            c.cost = c.costForTurn = std::max(0, static_cast<int>(c.costForTurn) - 9);
+        } else if (c.cost >= 0) {
+            c.cost = std::max(0, static_cast<int>(c.cost) - 9);
             c.costForTurn = 0;
         }
-    }
-
-    // probably only need to do hand?
-
-    for (auto &c : drawPile) {
-        if (c.getType() == CardType::SKILL && c.cost > 0) {
-            c.cost = 0;
-            c.costForTurn = 0;
-        }
-    }
-
-    for (auto &c : discardPile) {
-        if (c.getType() == CardType::SKILL && c.cost > 0) {
-            c.cost = 0;
-            c.costForTurn = 0;
-        }
-    }
-
-    for (auto &c : exhaustPile) {
-        if (c.getType() == CardType::SKILL && c.cost > 0) {
-            c.cost = 0;
-            c.costForTurn = 0;
-        }
-    }
-
-
+    };
+    for (int i = 0; i < cardsInHand; ++i) modifySkill(hand[i]);
+    for (auto &c : drawPile) modifySkill(c);
+    for (auto &c : discardPile) modifySkill(c);
+    for (auto &c : exhaustPile) modifySkill(c);
 }
 
 // **************** END SPECIAL HELPERS ****************

@@ -5,7 +5,7 @@
 #ifndef STS_LIGHTSPEED_CARDQUEUE_H
 #define STS_LIGHTSPEED_CARDQUEUE_H
 
-#include <array>
+#include <vector>
 #include <cassert>
 
 #include "combat/CardInstance.h"
@@ -29,6 +29,7 @@ namespace sts {
 
         bool purgeOnUse = false;
         bool exhaustOnUse = false;
+        std::uint64_t publicTraceSource = 0; // Diagnostic public causal handle; never a game UID.
 
         CardQueueItem() = default;
         CardQueueItem(const CardInstance &card, int target, int energyOnUse) : card(card), target(target), energyOnUse(energyOnUse) {}
@@ -45,7 +46,9 @@ namespace sts {
         int size = 0;
         int backIdx = 0;
         int frontIdx = 0;
-        std::array<CardQueueItem, capacity> arr;
+        std::vector<CardQueueItem> arr = std::vector<CardQueueItem>(capacity);
+
+        void reserveOne();
 
         void clear();
         void pushFront(CardQueueItem item);

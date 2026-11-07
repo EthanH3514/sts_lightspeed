@@ -40,6 +40,20 @@ namespace sts {
         std::vector<CardInstance> discardPile;
         std::vector<CardInstance> exhaustPile;
 #endif
+        // Public knowledge from selected bottom placements; bottom-first IDs.
+        std::vector<int> publicKnownBottomIds;
+        bool publicBottomOrderUncertain = false;
+        // Public deterministic generation suffix, bottom-to-top identities.
+        std::vector<int> publicKnownTopIds;
+        bool publicTopOrderUncertain = false;
+        // Unordered public opening-priority group, NOT the shuffled order.
+        // Only original innate/bottled cards that have never left the opening
+        // draw pile remain here. A real shuffle removes this constraint.
+        std::vector<int> publicOpeningPriorityIds;
+        bool publicOpeningOrderUncertain = false;
+        // Soul movement completion resets temporary costs, not immediately on discard.
+        // Internal lifecycle bookkeeping; copied with a rollout, never policy input.
+        std::vector<int> pendingDiscardCostResets;
         int handNormalityCount = 0;
         int handPainCount = 0;
         int strikeCount = 0;
@@ -48,9 +62,12 @@ namespace sts {
         int discardPileBloodCardCount = 0;
 
         void init(const GameContext &gc, BattleContext &bc); // returns count of innate cards
+        void clearPublicDrawOrder();
 
         void createDeckCardInstanceInDrawPile(const Card &card, int deckIdx, int drawIdx);
         void createTempCardInDrawPile(int insertIdx, CardInstance c);
+        void createTempCardShuffledIntoDrawPile(Random &rng, CardInstance c);
+        void createTempCardOnDrawTop(CardInstance c);
         void createTempCardInDiscard(CardInstance c);
         void createTempCardInHand(CardInstance c);
 
@@ -67,10 +84,13 @@ namespace sts {
 
         void insertToDrawPile(int drawPileIdx, const CardInstance &c);
         void moveToDrawPileTop(const CardInstance &c);
+        void moveToDrawPileBottom(const CardInstance &c);
+        void notePublicRandomInsertion();
         void shuffleIntoDrawPile(Random &cardRandomRng, const CardInstance &c);
 
         void moveToDiscardPile(const CardInstance &c);
         void moveDiscardPileIntoToDrawPile();
+        void settleDiscardCosts();
 
         // **************
         void notifyAddCardToCombat(const CardInstance &c);
@@ -93,7 +113,7 @@ namespace sts {
         // special helpers
         void draw(BattleContext &bc, int amount);
         void onTookDamage(); // update blood for blood, masterful stab
-        void findAndUpgradeSpecialData(std::int16_t uniqueId, int amount);
+        void findAndUpgradeSpecialData(std::int16_t uniqueId, int amount, std::uint64_t publicReference = 0);
         void onBuffCorruption();
     };
 

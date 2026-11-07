@@ -465,11 +465,11 @@ void GameContext::initRelics() {
             break;
     }
 
-    java::Collections::shuffle(commonRelicPool.begin(), commonRelicPool.end(), java::Random(relicRng.nextLong()));
-    java::Collections::shuffle(uncommonRelicPool.begin(), uncommonRelicPool.end(), java::Random(relicRng.nextLong()));
-    java::Collections::shuffle(rareRelicPool.begin(), rareRelicPool.end(), java::Random(relicRng.nextLong()));
-    java::Collections::shuffle(shopRelicPool.begin(), shopRelicPool.end(), java::Random(relicRng.nextLong()));
-    java::Collections::shuffle(bossRelicPool.begin(), bossRelicPool.end(), java::Random(relicRng.nextLong()));
+    java::Collections::shuffle(commonRelicPool.begin(), commonRelicPool.end(), java::Random(relicRng.randomLong()));
+    java::Collections::shuffle(uncommonRelicPool.begin(), uncommonRelicPool.end(), java::Random(relicRng.randomLong()));
+    java::Collections::shuffle(rareRelicPool.begin(), rareRelicPool.end(), java::Random(relicRng.randomLong()));
+    java::Collections::shuffle(shopRelicPool.begin(), shopRelicPool.end(), java::Random(relicRng.randomLong()));
+    java::Collections::shuffle(bossRelicPool.begin(), bossRelicPool.end(), java::Random(relicRng.randomLong()));
 
 }
 
@@ -885,8 +885,9 @@ void GameContext::setupEvent() { // todo necronomicon event
 
         case Event::FALLING: { // todo test and CANNOT BE BOTTLED
             int counts[3] {0,0,0};
-            for (const auto &c : deck.cards) {
-                ++counts[static_cast<int>(c.getType())];
+            for (int i = 0; i < deck.cards.size(); ++i) {
+                int type = static_cast<int>(deck.cards[i].getType());
+                if (type >= 0 && type < 3 && !deck.isCardBottled(i)) ++counts[type];
             }
 
             int attacksIdx = counts[0] > 0 ? miscRng.random(counts[0] - 1) : -1;
@@ -902,6 +903,7 @@ void GameContext::setupEvent() { // todo necronomicon event
             info.powerCardDeckIdx = -1;
 
             for (int i = 0; i < deck.cards.size(); ++i) {
+                if (deck.isCardBottled(i)) continue;
                 switch (deck.cards[i].getType()) {
                     case CardType::ATTACK:
                         if (attackCount++ == attacksIdx) {
@@ -1096,8 +1098,8 @@ void GameContext::enterBossTreasureRoom() {
         info.bossRelics[i] = returnRandomRelic(RelicTier::BOSS);
     }
 
-    regainControlAction = [=](GameContext &gc) {
-        gc.transitionToAct(act+1);
+    regainControlAction = [](GameContext &gc) {
+        gc.transitionToAct(gc.act+1);
     };
 }
 
@@ -1334,6 +1336,14 @@ bool GameContext::obtainRelic(RelicId r) {
 
         case RelicId::BOTTLED_TORNADO: {
             opensScreen = obtainBottleHelper(*this, CardType::POWER);
+            break;
+        }
+
+        case RelicId::ORRERY: {
+            Rewards reward;
+            for (int i = 0; i < 5; ++i) reward.addCardReward(createCardReward(curRoom));
+            openCombatRewardScreen(reward);
+            opensScreen = true;
             break;
         }
 
@@ -2605,7 +2615,7 @@ void GameContext::chooseEventOption(int idx) {
                 if (didEncounter) {
                     int goldAmt = miscRng.random(25, 35);
                     bool addRelic = false;
-                    RelicId combatRewardRelic;
+                    RelicId combatRewardRelic = RelicId::INVALID;
 
                     for (int i = info.phase; i < 3; ++i) {
                         if (info.rewards[i] == 0) {
@@ -2616,14 +2626,14 @@ void GameContext::chooseEventOption(int idx) {
                         }
                     }
 
-                    regainControlAction = [=](GameContext &gc) {
+                    regainControlAction = [goldAmt, addRelic, combatRewardRelic](GameContext &gc) {
                         Rewards reward;
                         reward.addGold(goldAmt);
                         if (addRelic) {
                             reward.addRelic(combatRewardRelic);
                         }
-                        reward.addCardReward(createCardReward(Room::EVENT));
-                        addPotionRewards(reward);
+                        reward.addCardReward(gc.createCardReward(Room::EVENT));
+                        gc.addPotionRewards(reward);
                         gc.openCombatRewardScreen(reward);
                         gc.regainControlAction = returnToMapAction;
                     };
@@ -2642,6 +2652,7 @@ void GameContext::chooseEventOption(int idx) {
                     }
 
                     ++info.phase;
+                    if (info.phase >= 3) regainControl();
                 }
 
             } else if (idx == 1) {
@@ -2662,6 +2673,7 @@ void GameContext::chooseEventOption(int idx) {
                     break;
 
                 case 1:
+                    loseGold(unfavorable ? 50 : 40);
                     deck.upgradeRandomCards(miscRng, 2);
                     regainControl();
                     break;
@@ -2673,16 +2685,18 @@ void GameContext::chooseEventOption(int idx) {
 
                 case 3:
                     loseGold(unfavorable ? 75 : 60);
-                    deck.transformRandomCards(miscRng, 2); // TODO
-                    regainControl();
+                    info.transformRng = MISC_RNG;
+                    openCardSelectScreen(CardSelectScreenType::TRANSFORM, 2);
+                    break;
 
                 case 4:
                     loseGold(unfavorable ? 110 : 90);
-                    regainControlAction = [=](GameContext &gc) {
-                        gc.deck.upgradeRandomCards(miscRng, 1);
+                    regainControlAction = [](GameContext &gc) {
+                        gc.deck.upgradeRandomCards(gc.miscRng, 1);
                         returnToMapAction(gc);
                     };
                     openCardSelectScreen(CardSelectScreenType::REMOVE, 1);
+                    break;
 
                 case 5:
                     playerLoseHp(unfavorable ? 5 : 3);
@@ -3024,11 +3038,11 @@ void GameContext::chooseEventOption(int idx) {
 
                     const int goldAmt = unfavorable ? 25 : 50;
                     const RelicId rareRelic = returnRandomRelic(RelicTier::RARE);
-                    regainControlAction = [=](GameContext &gc) {
+                    regainControlAction = [goldAmt, rareRelic](GameContext &gc) {
                         Rewards reward;
                         reward.addGold(goldAmt);
                         reward.addRelic(rareRelic);
-                        addPotionRewards(reward);
+                        gc.addPotionRewards(reward);
                         reward.addCardReward(gc.createCardReward(Room::EVENT));
                         gc.openCombatRewardScreen(reward);
                         gc.regainControlAction = returnToMapAction;
@@ -3069,12 +3083,12 @@ void GameContext::chooseEventOption(int idx) {
         case Event::HYPNOTIZING_COLORED_MUSHROOMS: {
             if (idx == 0) {
                 const int goldAmt = miscRng.random(20, 30);
-                regainControlAction = [=](GameContext &gc) {
+                regainControlAction = [goldAmt](GameContext &gc) {
                     Rewards reward;
                     reward.addGold(goldAmt);
                     reward.addRelic(RelicId::ODD_MUSHROOM);
-                    addPotionRewards(reward);
-                    reward.addCardReward(createCardReward(Room::EVENT));
+                    gc.addPotionRewards(reward);
+                    reward.addCardReward(gc.createCardReward(Room::EVENT));
                     gc.openCombatRewardScreen(reward);
                     gc.regainControlAction = returnToMapAction;
                 };
@@ -3119,7 +3133,9 @@ void GameContext::chooseEventOption(int idx) {
 
             } else if (idx == 1) {
                 damagePlayer(6);
-                deck.obtain(*this, CardId::RITUAL_DAGGER);
+                Card dagger(CardId::RITUAL_DAGGER);
+                dagger.misc = 15;
+                deck.obtain(*this, dagger);
                 regainControl();
 
             } else {
@@ -3178,7 +3194,7 @@ void GameContext::chooseEventOption(int idx) {
 
         case Event::SCRAP_OOZE:
             if (idx == 0) {
-                damagePlayer(unfavorable ? 5 : 3);
+                damagePlayer((unfavorable ? 5 : 3) + info.eventData);
                 const int roll = miscRng.random(99);
                 const int relicChance = info.eventData*10 + 25;
                 if (roll >= 99 - relicChance) {
@@ -3329,6 +3345,8 @@ void GameContext::chooseEventOption(int idx) {
                 if (result || unfavorable) {
                     deck.obtain(*this, CardId::WRITHE);
                 }
+                auto relic = returnRandomScreenlessRelic(returnRandomRelicTier(relicRng, act));
+                obtainRelic(relic);
                 regainControl();
 
             } else if (idx == 1) {
@@ -3732,7 +3750,6 @@ void GameContext::chooseCampfireOption(int idx) {
 
         case 4: { // TOKE
             openCardSelectScreen(CardSelectScreenType::REMOVE, 1);
-            regainControl();
             break;
         }
 

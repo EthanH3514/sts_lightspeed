@@ -32,12 +32,14 @@ namespace sts {
         UNDECIDED=0,
         PLAYER_VICTORY,
         PLAYER_LOSS,
+        PLAYER_ESCAPED,
     };
 
     static constexpr const char * battleOutcomeStrings[] {
             "UNDECIDED",
             "PLAYER_VICTORY",
             "PLAYER_LOSS",
+            "PLAYER_ESCAPED",
     };
 
     class GameContext;
@@ -56,6 +58,9 @@ namespace sts {
         int loopCount = 0;
         int energyWasted = 0;
         int cardsDrawn = 0;
+        // Public selected-card movement during the current submitted action.
+        // This records the chosen identity, never an unobserved draw-pile top.
+        int publicMovedDrawTopUniqueId = -1;
         // end for debugging purposes
 
         Random aiRng;
@@ -116,6 +121,7 @@ namespace sts {
 // ****************************************
 
         void executeActions();
+        bool canUsePotion(int slot) const;
 
         void playCardQueueItem(CardQueueItem);
         void useCard();
@@ -126,6 +132,7 @@ namespace sts {
         void usePowerCard();
 
         void onUseAttackCard();
+        void onUseOrderedPowers();
         void onUseSkillCard();
         void onUsePowerCard();
 
@@ -144,6 +151,7 @@ namespace sts {
         void cleanCardQueue();
 
         [[nodiscard]] bool isCardPlayAllowed() const;
+        [[nodiscard]] bool isHandCardPlayAllowed() const;
 
         // **********************
 
@@ -198,11 +206,13 @@ namespace sts {
         void chooseArmamentsCard(int handIdx);
         void chooseCodexCard(CardId id);
         void chooseDiscardToHandCard(int discardIdx, bool forZeroCost);
+        void chooseDiscardToHandCards(const std::vector<int> &indices, bool forZeroCost);
         void chooseDiscoveryCard(CardId id);
         void chooseDualWieldCard(int handIdx);
         void chooseExhaustOneCard(int handIdx);
         void chooseExhumeCard(int exhaustIdx);
         void chooseForethoughtCard(int handIdx);
+        void chooseForethoughtCards(const fixed_list<int,10> &handIdxs);
         void chooseHeadbuttCard(int discardIdx);
         void chooseRecycleCard(int handIdx);
         void chooseWarcryCard(int handIdx);

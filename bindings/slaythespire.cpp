@@ -9,8 +9,17 @@
 
 #include <sstream>
 #include <algorithm>
+#include <iomanip>
+#include <memory>
+#include <stdexcept>
+#include <tuple>
 
 #include "sim/ConsoleSimulator.h"
+#include "sim/PublicCombatResampling.h"
+#include "sim/PublicBombState.h"
+#include "sim/PublicMapState.h"
+#include "sim/PublicRunSupplement.h"
+#include "sim/PublicShop.h"
 #include "sim/search/ScumSearchAgent2.h"
 #include "sim/SimHelpers.h"
 #include "sim/PrintHelpers.h"
@@ -18,8 +27,632 @@
 
 #include "slaythespire.h"
 
+#ifdef SPIRE_AI_PUBLIC_SEARCH
+#include "combat_search/Engine.h"
+#include "combat_search/Decisions.h"
+#ifdef SPIRE_AI_SESSION_SEARCH
+#include "combat_search/SessionHistory.h"
+#include "combat_search/LiveHistory.h"
+#endif
+#ifdef SPIRE_AI_SEARCH_TEST_FIXTURES
+#include "native_search_fixture.h"
+#endif
+#endif
+
 
 using namespace sts;
+
+namespace pybind = pybind11;
+
+namespace {
+
+pybind::dict publicMapState(const GameContext &game) {
+    const auto state = public_map::capture(game);
+    pybind::dict result;
+    result["schema_version"] = 1;
+    result["available"] = state.available;
+    result["act"] = state.act;
+    if (!state.available) return result;
+    const auto point = [](public_map::Point value) {
+        pybind::dict result;
+        result["x"] = value.x;
+        result["y"] = value.y;
+        return result;
+    };
+    result["position"] = point(state.position);
+    result["boss_node"] = point(state.bossPosition);
+    result["known_boss"] = monsterEncounterStrings[static_cast<int>(state.boss)];
+    pybind::list starts;
+    for (auto start : state.starts) starts.append(point(start));
+    result["starts"] = starts;
+    pybind::list nodes;
+    for (const auto &node : state.nodes) {
+        auto item = point(node.position);
+        item["room"] = roomStrings[static_cast<int>(node.room)];
+        item["burning_elite"] = node.burningElite;
+        pybind::list next;
+        for (auto destination : node.next) next.append(point(destination));
+        item["next"] = next;
+        nodes.append(item);
+    }
+    result["nodes"] = nodes;
+    return result;
+}
+
+const char *screenStateName(ScreenState state) {
+    switch (state) {
+        case ScreenState::EVENT_SCREEN: return "EVENT";
+        case ScreenState::REWARDS: return "REWARDS";
+        case ScreenState::BOSS_RELIC_REWARDS: return "BOSS_RELIC_REWARDS";
+        case ScreenState::CARD_SELECT: return "CARD_SELECT";
+        case ScreenState::MAP_SCREEN: return "MAP";
+        case ScreenState::TREASURE_ROOM: return "TREASURE";
+        case ScreenState::REST_ROOM: return "REST";
+        case ScreenState::SHOP_ROOM: return "SHOP";
+        case ScreenState::BATTLE: return "BATTLE";
+        case ScreenState::INVALID:
+        default: return "INVALID";
+    }
+}
+
+const char *outcomeName(GameOutcome outcome) {
+    switch (outcome) {
+        case GameOutcome::PLAYER_VICTORY: return "PLAYER_VICTORY";
+        case GameOutcome::PLAYER_LOSS: return "PLAYER_LOSS";
+        case GameOutcome::UNDECIDED:
+        default: return "UNDECIDED";
+    }
+}
+
+const char *inputStateName(InputState state) {
+    switch (state) {
+        case InputState::PLAYER_NORMAL: return "PLAYER_NORMAL";
+        case InputState::CARD_SELECT: return "CARD_SELECT";
+        case InputState::EXECUTING_ACTIONS: return "EXECUTING_ACTIONS";
+        default: return "OTHER";
+    }
+}
+
+pybind::dict masterDeckCard(const Card &card) {
+    pybind::dict result;
+    result["id"] = getCardEnumName(card.getId());
+    result["upgrades"] = card.getUpgraded();
+    result["type"] = cardTypeStrings[static_cast<int>(card.getType())];
+    result["rarity"] = cardRarityStrings[static_cast<int>(card.getRarity())];
+    result["misc"] = card.misc;
+    return result;
+}
+
+pybind::dict combatCard(const CardInstance &card, const BattleContext *battle = nullptr) {
+    pybind::dict result;
+    result["id"] = getCardEnumName(card.getId());
+    result["cost"] = card.costForTurn;
+    result["base_cost"] = card.cost;
+    result["cost_for_turn"] = card.costForTurn;
+    result["free_to_play_once"] = card.freeToPlayOnce;
+    result["upgrades"] = card.getUpgradeCount();
+    result["type"] = cardTypeStrings[static_cast<int>(card.getType())];
+    result["has_target"] = card.requiresTarget();
+    result["exhausts"] = card.doesExhaust();
+    result["ethereal"] = card.isEthereal();
+    result["special_data"] = card.specialData;
+    if (card.getId() == CardId::RAMPAGE) {
+        result["base_damage"] = 8 + card.specialData;
+    } else if (card.getId() == CardId::RITUAL_DAGGER) {
+        result["base_damage"] = card.specialData;
+    }
+    result["unique_id"] = card.uniqueId;
+    if (battle != nullptr) {
+        result["is_playable"] = card.canUseOnAnyTarget(*battle);
+    }
+    return result;
+}
+
+pybind::list playerPowers(const Player &player) {
+    pybind::list result;
+    for (const auto &instance : public_state::playerPowers(player)) {
+        pybind::dict power;
+        power["id"] = playerStatusEnumStrings[static_cast<int>(instance.type)];
+        power["amount"] = instance.amount;
+        if (instance.type == PS::THE_BOMB || instance.type == PS::PANACHE) power["damage"] = instance.damage;
+        if (instance.type == PS::COMBUST) power["hp_loss"] = instance.hpLoss;
+        result.append(power);
+    }
+    return result;
+}
+
+pybind::list monsterPowers(const Monster &monster) {
+    pybind::list result;
+    for (int idx = 0; idx < static_cast<int>(MonsterStatus::INVALID); ++idx) {
+        auto status = static_cast<MonsterStatus>(idx);
+        const int amount = monster.getStatusInternal(status);
+        if (amount == 0) {
+            continue;
+        }
+        pybind::dict power;
+        power["id"] = monsterStatusEnumStrings[idx];
+        power["amount"] = amount;
+        result.append(power);
+    }
+    return result;
+}
+
+pybind::dict battleState(const BattleContext &battle) {
+    pybind::dict result;
+    result["turn"] = battle.turn;
+    result["turn_play_count_schema"] = 1;
+    result["cards_played_this_turn"] = static_cast<int>(battle.player.cardsPlayedThisTurn);
+    result["bomb_state_schema"] = public_state::bombStateSchema;
+    result["powers_complete"] = public_state::powersComplete(battle.player);
+    result["effects_resolved"] = public_state::effectsResolved(battle);
+    result["times_damaged"] = battle.player.timesDamagedThisCombat;
+    result["public_known_bottom_ids"] = battle.cards.publicKnownBottomIds;
+    result["bottom_knowledge_tracked"] = true;
+    result["public_known_top_ids"] = battle.cards.publicKnownTopIds;
+    result["top_knowledge_schema"] = 1;
+    result["top_order_uncertain"] = battle.cards.publicTopOrderUncertain;
+    result["bottom_order_uncertain"] = battle.cards.publicBottomOrderUncertain;
+    result["opening_order_schema"] = 1;
+    result["public_opening_priority_ids"] = battle.cards.publicOpeningPriorityIds;
+    result["opening_order_uncertain"] = battle.cards.publicOpeningOrderUncertain;
+    result["input_state"] = inputStateName(battle.inputState);
+    if (battle.inputState == InputState::CARD_SELECT) {
+        result["card_select_task"] = cardSelectTaskStrings[
+            static_cast<int>(battle.cardSelectInfo.cardSelectTask)];
+        if (battle.cardSelectInfo.cardSelectTask == CardSelectTask::FORETHOUGHT) {
+            result["selection_any_number"] = battle.cardSelectInfo.canPickAnyNumber;
+        }
+        if (battle.cardSelectInfo.cardSelectTask == CardSelectTask::EXHAUST_MANY) {
+            result["selection_max_count"] = battle.cardSelectInfo.pickCount;
+        }
+        if (battle.cardSelectInfo.cardSelectTask == CardSelectTask::LIQUID_MEMORIES_POTION)
+            result["selection_pick_count"] = battle.cardSelectInfo.pickCount;
+        if (battle.cardSelectInfo.cardSelectTask == CardSelectTask::DISCOVERY)
+            result["selection_card_type"] = cardTypeStrings[static_cast<int>(battle.cardSelectInfo.discoveryType)];
+        if (battle.cardSelectInfo.cardSelectTask == CardSelectTask::DISCOVERY ||
+            battle.cardSelectInfo.cardSelectTask == CardSelectTask::CODEX) {
+            pybind::list candidates;
+            for (const auto id : battle.cardSelectInfo.cards) {
+                CardInstance preview(id);
+                if (id == CardId::BLOOD_FOR_BLOOD) {
+                    preview.updateCost(-battle.player.timesDamagedThisCombat);
+                }
+                auto card = combatCard(preview);
+                card.attr("pop")("unique_id"); // Preview, not an existing combat card.
+                card["base_cost"] = preview.cost;
+                candidates.append(card);
+            }
+            result["selection_candidates"] = candidates;
+            result["selection_copy_count"] = battle.cardSelectInfo.data0;
+        }
+    }
+
+    pybind::dict player;
+    player["current_hp"] = battle.player.curHp;
+    player["max_hp"] = battle.player.maxHp;
+    player["block"] = battle.player.block;
+    player["energy"] = battle.player.energy;
+    player["stance"] = stanceStrings[static_cast<int>(battle.player.stance)];
+    player["powers"] = playerPowers(battle.player);
+    if (battle.player.hasStatus<PS::SURROUNDED>()) {
+        player["facing_monster_slot"] = battle.player.lastTargetedMonster;
+    }
+    result["player"] = player;
+
+    pybind::list monsters;
+    for (int idx = 0; idx < battle.monsters.monsterCount; ++idx) {
+        const auto &monster = battle.monsters.arr[idx];
+        pybind::dict item;
+        item["id"] = monster.getName();
+        item["current_hp"] = monster.curHp;
+        item["max_hp"] = monster.maxHp;
+        item["block"] = monster.block;
+        item["move_id"] = monsterMoveStrings[static_cast<int>(monster.moveHistory[0])];
+        const auto damage = monster.getMoveBaseDamage(battle);
+        item["move_base_damage"] = damage.damage;
+        item["move_hits"] = damage.attackCount;
+        item["is_gone"] = monster.isDeadOrEscaped();
+        item["half_dead"] = monster.halfDead;
+        if (monster.publicGeneration > 0) item["public_generation"] = monster.publicGeneration;
+        if (monster.id == MonsterId::BRONZE_ORB && !monster.isDeadOrEscaped() &&
+            monster.hasStatus<MS::STASIS>()) {
+            item["stasis_card"] = combatCard(battle.cards.stasisCards[std::min(1, idx)]);
+        }
+        item["powers"] = monsterPowers(monster);
+        monsters.append(item);
+    }
+    result["monsters"] = monsters;
+
+    pybind::list hand;
+    for (int idx = 0; idx < battle.cards.cardsInHand; ++idx) {
+        hand.append(combatCard(battle.cards.hand[idx], &battle));
+    }
+    result["hand"] = hand;
+
+    pybind::list drawPile;
+    for (const auto &card : battle.cards.drawPile) drawPile.append(combatCard(card));
+    result["draw_pile"] = drawPile;
+    pybind::list discardPile;
+    for (const auto &card : battle.cards.discardPile) discardPile.append(combatCard(card));
+    result["discard_pile"] = discardPile;
+    pybind::list exhaustPile;
+    for (const auto &card : battle.cards.exhaustPile) exhaustPile.append(combatCard(card));
+    result["exhaust_pile"] = exhaustPile;
+    return result;
+}
+
+std::string rngWordHex(std::uint64_t value) {
+    std::ostringstream output;
+    output << std::hex << std::setfill('0') << std::setw(16) << value;
+    return output.str();
+}
+
+pybind::dict rngState(const Random &rng) {
+    pybind::dict result;
+    result["counter"] = rng.counter;
+    result["state0_hex"] = rngWordHex(rng.seed0);
+    result["state1_hex"] = rngWordHex(rng.seed1);
+    return result;
+}
+
+template<typename Container>
+pybind::list monsterEncounterList(const Container &encounters, std::size_t offset = 0) {
+    pybind::list result;
+    for (std::size_t i = offset; i < encounters.size(); ++i) {
+        result.append(monsterEncounterStrings[static_cast<int>(encounters[i])]);
+    }
+    return result;
+}
+
+pybind::list relicList(const std::vector<RelicId> &relics) {
+    pybind::list result;
+    for (const auto relic : relics) {
+        result.append(getRelicName(relic));
+    }
+    return result;
+}
+
+pybind::dict gameRngState(
+    const GameContext &game,
+    const BattleContext *battle
+) {
+    pybind::dict streams;
+    streams["neow"] = rngState(game.neowRng);
+    streams["treasure"] = rngState(game.treasureRng);
+    streams["event"] = rngState(game.eventRng);
+    streams["relic"] = rngState(game.relicRng);
+    streams["potion"] = rngState(battle == nullptr ? game.potionRng : battle->potionRng);
+    streams["card"] = rngState(game.cardRng);
+    streams["card_random"] = rngState(
+        battle == nullptr ? game.cardRandomRng : battle->cardRandomRng
+    );
+    streams["merchant"] = rngState(game.merchantRng);
+    streams["monster"] = rngState(game.monsterRng);
+    streams["shuffle"] = rngState(battle == nullptr ? game.shuffleRng : battle->shuffleRng);
+    streams["misc"] = rngState(battle == nullptr ? game.miscRng : battle->miscRng);
+    streams["math_util"] = rngState(game.mathUtilRng);
+    if (battle != nullptr) {
+        streams["ai"] = rngState(battle->aiRng);
+        streams["monster_hp"] = rngState(battle->monsterHpRng);
+    } else {
+        streams["ai"] = rngState(game.aiRng);
+        streams["monster_hp"] = rngState(game.monsterHpRng);
+    }
+
+    pybind::dict dynamics;
+    dynamics["card_rarity_adjustment"] = game.cardRarityFactor;
+    dynamics["potion_chance_adjustment"] = game.potionChance;
+    dynamics["monster_room_chance"] = game.monsterChance;
+    dynamics["shop_room_chance"] = game.shopChance;
+    dynamics["treasure_room_chance"] = game.treasureChance;
+
+    std::size_t monsterListOffset = game.monsterListOffset;
+    std::size_t eliteMonsterListOffset = game.eliteMonsterListOffset;
+    if (game.curRoom == Room::MONSTER && monsterListOffset > 0) {
+        --monsterListOffset;
+    }
+    if (game.curRoom == Room::ELITE && eliteMonsterListOffset > 0) {
+        --eliteMonsterListOffset;
+    }
+    pybind::dict content;
+    content["monster_list"] = monsterEncounterList(game.monsterList, monsterListOffset);
+    content["elite_monster_list"] = monsterEncounterList(
+        game.eliteMonsterList,
+        eliteMonsterListOffset
+    );
+    pybind::list bosses;
+    if (game.boss != MonsterEncounter::INVALID) {
+        bosses.append(monsterEncounterStrings[static_cast<int>(game.boss)]);
+    }
+    if (game.secondBoss != MonsterEncounter::INVALID) {
+        bosses.append(monsterEncounterStrings[static_cast<int>(game.secondBoss)]);
+    }
+    content["boss_list"] = bosses;
+    content["common_relic_pool"] = relicList(game.commonRelicPool);
+    content["uncommon_relic_pool"] = relicList(game.uncommonRelicPool);
+    content["rare_relic_pool"] = relicList(game.rareRelicPool);
+    content["shop_relic_pool"] = relicList(game.shopRelicPool);
+    content["boss_relic_pool"] = relicList(game.bossRelicPool);
+
+    pybind::dict result;
+    result["format_version"] = 2;
+    result["streams"] = streams;
+    result["dynamics"] = dynamics;
+    result["content"] = content;
+    return result;
+}
+
+#ifdef SPIRE_AI_SESSION_SEARCH
+#include "combat_search/RichCombatPublic.h"
+#endif
+class SimulatorSession {
+public:
+#ifdef SPIRE_AI_SESSION_SEARCH
+#include "combat_search/SessionBinding.inc"
+#endif
+    SimulatorSession() : simulator(std::make_unique<ConsoleSimulator>()) {}
+    ~SimulatorSession() { clear(); }
+
+    std::unique_ptr<SimulatorSession> cloneExact() const {
+        ensureReady();
+#ifdef SPIRE_AI_SESSION_SEARCH
+        requireCloneablePublicSession();
+#endif
+        auto clone = std::make_unique<SimulatorSession>();
+        clone->simulator->gc = new GameContext(*simulator->gc);
+        if (simulator->gc->map != nullptr) {
+            clone->simulator->gc->map = std::make_shared<Map>(*simulator->gc->map);
+        }
+        *clone->simulator->battleSim.bc = *simulator->battleSim.bc;
+        clone->simulator->battleSim.initialized = simulator->battleSim.initialized;
+        clone->combatOnly = combatOnly;
+        clone->enemyHistory = enemyHistory;
+#ifdef SPIRE_AI_SESSION_SEARCH
+        clone->publicSessionEnabled=publicSessionEnabled;clone->publicSessionEpoch=publicSessionEpoch;
+        clone->richMemory=richMemory;
+        if(publicSession)clone->publicSession=std::make_unique<spire_session::SessionHistory>(
+            *clone->simulator->battleSim.bc,*publicSession);
+#endif
+        return clone;
+    }
+
+    std::unique_ptr<SimulatorSession> resampleCombat(
+        const std::array<std::uint64_t, 7> &seeds, int knownDrawTopUniqueId = -1
+    ) const {
+        ensureReady();
+        if (!simulator->battleSim.initialized) {
+            throw std::runtime_error("an initialized combat is required");
+        }
+        auto clone = cloneExact();
+        public_sampling::resampleCombatContinuation(
+            *clone->simulator->gc, *clone->simulator->battleSim.bc, seeds,
+            knownDrawTopUniqueId, &clone->enemyHistory
+        );
+        clone->combatOnly = true;
+#ifdef SPIRE_AI_SESSION_SEARCH
+        clone->publicSessionEnabled=false;clone->publicSession.reset();
+#endif
+        return clone;
+    }
+
+#ifdef SPIRE_AI_PUBLIC_SEARCH
+#ifdef SPIRE_AI_SEARCH_TEST_FIXTURES
+    static std::unique_ptr<SimulatorSession> testSearchFixture(const std::string &spec) {
+        auto result=std::make_unique<SimulatorSession>();
+        result->reset(CharacterClass::IRONCLAD,7,0);
+        spire_search_test::configure(*result->simulator->gc,*result->simulator->battleSim.bc,nlohmann::json::parse(spec));
+        result->simulator->battleSim.initialized=true;result->combatOnly=true;
+        result->observeEnemies();
+        return result;
+    }
+#endif
+    std::string searchPublic(const std::vector<std::array<std::uint64_t,7>> &seeds,
+        int knownTop,const std::string &expected,const std::string &actions,
+        const std::string &budget,const std::string &metadata,bool trace) const {
+        ensureReady();
+        if(!simulator->battleSim.initialized)throw std::runtime_error("an initialized combat is required");
+        using spire_search::J;
+        const auto started=spire_search::Clock::now();
+        // Parse public inputs before releasing the GIL. No Python callbacks in
+        // the rollout hot loop and no source mutation on success or failure.
+        auto view=J::parse(expected), candidates=J::parse(actions), limits=J::parse(budget);
+        auto rules=J::parse(metadata);
+        auto game=std::make_unique<GameContext>(*simulator->gc);
+        auto battle=std::make_unique<BattleContext>(*simulator->battleSim.bc);
+        auto history=enemyHistory;
+        if(!limits.at("max_seconds").is_null())limits["max_seconds"]=std::max(0.,
+            limits.at("max_seconds").get<double>()-std::chrono::duration<double>(spire_search::Clock::now()-started).count());
+        pybind::gil_scoped_release release;
+        return spire_search::search(*game,*battle,history,
+            seeds,knownTop,view,candidates,limits,rules,trace).dump();
+    }
+#endif
+
+    void reset(CharacterClass character, std::uint64_t seed, int ascension) {
+        if (ascension < 0 || ascension > 20) {
+            throw std::invalid_argument("ascension must be between 0 and 20");
+        }
+        clear();
+        simulator = std::make_unique<ConsoleSimulator>();
+        combatOnly = false;
+        enemyHistory = public_sampling::PublicEnemyHistory();
+        simulator->setupGame(seed, character, ascension);
+    }
+
+    std::string getActionsText() const {
+        ensureReady();
+        if (combatOnly && simulator->battleSim.isBattleComplete()) return {};
+        std::ostringstream output;
+        auto *oldBuffer = std::cout.rdbuf(output.rdbuf());
+        try {
+            simulator->printActions(output);
+        } catch (...) {
+            std::cout.rdbuf(oldBuffer);
+            throw;
+        }
+        std::cout.rdbuf(oldBuffer);
+        return output.str();
+    }
+
+    void takeAction(const std::string &action) {
+        ensureReady();
+#ifdef SPIRE_AI_SESSION_SEARCH
+        requireStructuredPublicAction();
+#endif
+        simulator->battleSim.bc->publicMovedDrawTopUniqueId = -1;
+        SimulatorContext context;
+        context.printFirstLine = false;
+        context.skipTests = true;
+        context.printLogActions = false;
+        context.printInput = false;
+        context.printPrompts = false;
+        context.quitOnTestFailed = true;
+        std::ostringstream output;
+        std::vector<public_sampling::PublicTheftEvent> theftEvents;
+        public_sampling::PublicTheftScope theftScope(*simulator->battleSim.bc,theftEvents);
+        if (combatOnly) {
+            if (simulator->battleSim.isBattleComplete()) {
+                throw std::runtime_error("the sampled combat has ended");
+            }
+            simulator->battleSim.handleInputLine(action, output, context);
+            observeEnemies(&theftEvents);
+            return;
+        }
+        simulator->handleInputLine(action, output, context);
+        observeEnemies(&theftEvents);
+    }
+
+    std::array<int, NNInterface::observation_space_size> getObservation() const {
+        ensureReady();
+        return NNInterface::getInstance()->getObservation(*simulator->gc);
+    }
+
+    std::string publicShopShelf() const {
+        ensureReady();
+        return spire_shop_public::capture(*simulator->gc).dump();
+    }
+
+    std::string publicRunSupplement() const {
+        ensureReady();
+        return spire_run_public::capture(simulator->gc->deck).dump();
+    }
+
+    pybind::dict getState() const {
+        ensureReady();
+        const auto &game = *simulator->gc;
+        pybind::dict result;
+        result["in_game"] = combatOnly ?
+            simulator->battleSim.bc->outcome == Outcome::UNDECIDED :
+            game.outcome == GameOutcome::UNDECIDED;
+        if (combatOnly) {
+            result["combat_outcome"] =
+                battleOutcomeStrings[static_cast<int>(simulator->battleSim.bc->outcome)];
+        }
+
+        pybind::dict run;
+        run["seed"] = game.seed;
+        run["character"] = characterClassEnumNames[static_cast<int>(game.cc)];
+        run["ascension"] = game.ascension;
+        run["act"] = game.act;
+        run["floor"] = game.floorNum;
+        run["boss"] = monsterEncounterStrings[static_cast<int>(game.boss)];
+        run["room_type"] = roomStrings[static_cast<int>(game.curRoom)];
+        run["room_phase"] = game.screenState == ScreenState::BATTLE ? "COMBAT" : screenStateName(game.screenState);
+        run["action_phase"] = "WAITING_ON_USER";
+        run["outcome"] = outcomeName(game.outcome);
+        result["run"] = run;
+        result["map"] = publicMapState(game);
+
+        const bool activeBattle = game.screenState == ScreenState::BATTLE && simulator->battleSim.isInitialized();
+        pybind::dict player;
+        player["hp"] = activeBattle ? simulator->battleSim.bc->player.curHp : game.curHp;
+        player["max_hp"] = activeBattle ? simulator->battleSim.bc->player.maxHp : game.maxHp;
+        player["gold"] = activeBattle ? simulator->battleSim.bc->player.gold : game.gold;
+        result["player"] = player;
+
+        pybind::dict keys;
+        keys["emerald"] = game.greenKey;
+        keys["ruby"] = game.redKey;
+        keys["sapphire"] = game.blueKey;
+        result["keys"] = keys;
+
+        pybind::dict inventory;
+        pybind::list deck;
+        for (const auto &card : game.deck.cards) deck.append(masterDeckCard(card));
+        inventory["deck"] = deck;
+        pybind::list relics;
+        for (const auto &relic : game.relics.relics) {
+            pybind::dict item;
+            item["id"] = getRelicName(relic.id);
+            item["counter"] = relic.data;
+            relics.append(item);
+        }
+        inventory["relics"] = relics;
+        pybind::list potions;
+        // BattleContext owns the live inventory until combat exit. GameContext
+        // is a stale pre-fight copy after drinking/discarding a potion.
+        const auto &currentPotions = activeBattle ? simulator->battleSim.bc->potions : game.potions;
+        const int currentPotionCapacity = activeBattle ? simulator->battleSim.bc->potionCapacity : game.potionCapacity;
+        for (int idx = 0; idx < currentPotionCapacity; ++idx) {
+            pybind::dict item;
+            item["id"] = getPotionName(currentPotions[idx]);
+            potions.append(item);
+        }
+        inventory["potions"] = potions;
+        result["inventory"] = inventory;
+
+        pybind::dict screen;
+        screen["type"] = screenStateName(game.screenState);
+        screen["name"] = screenStateName(game.screenState);
+        screen["is_up"] = true;
+        result["screen"] = screen;
+
+        if (activeBattle) {
+            result["combat"] = battleState(*simulator->battleSim.bc);
+            result["public_moved_draw_top_unique_id"] =
+                simulator->battleSim.bc->publicMovedDrawTopUniqueId;
+        }
+        result["rng_state"] = gameRngState(
+            game,
+            activeBattle ? simulator->battleSim.bc : nullptr
+        );
+        return result;
+    }
+
+private:
+    std::unique_ptr<ConsoleSimulator> simulator;
+    public_sampling::PublicEnemyHistory enemyHistory;
+
+    void observeEnemies(const std::vector<public_sampling::PublicTheftEvent>* events=nullptr) {
+        if (simulator->gc->screenState == ScreenState::BATTLE &&
+            simulator->battleSim.initialized &&
+            !simulator->gc->hasRelic(RelicId::RUNIC_DOME)) {
+            enemyHistory.observe(public_sampling::publicEnemyFrame(*simulator->battleSim.bc),events);
+        } else {
+            enemyHistory = public_sampling::PublicEnemyHistory();
+        }
+    }
+    bool combatOnly = false;
+
+    void ensureReady() const {
+        if (!simulator || simulator->gc == nullptr) {
+            throw std::runtime_error("SimulatorSession must be reset before use");
+        }
+    }
+
+    void clear() {
+#ifdef SPIRE_AI_SESSION_SEARCH
+        resetPublicSession();
+#endif
+        if (simulator && simulator->gc != nullptr) {
+            delete simulator->gc;
+            simulator->gc = nullptr;
+        }
+        simulator.reset();
+    }
+};
+
+}
 
 PYBIND11_MODULE(slaythespire, m) {
     m.doc() = "pybind11 example plugin"; // optional module docstring
@@ -27,6 +660,227 @@ PYBIND11_MODULE(slaythespire, m) {
     m.def("get_seed_str", &SeedHelper::getString, "gets the integral representation of seed string used in the game ui");
     m.def("get_seed_long", &SeedHelper::getLong, "gets the seed string representation of an integral seed");
     m.def("getNNInterface", &sts::NNInterface::getInstance, "gets the NNInterface object");
+
+    pybind11::class_<SimulatorSession>(m, "SimulatorSession")
+        .def(pybind11::init<>())
+        .def("clone_exact", &SimulatorSession::cloneExact)
+        .def("resample_combat", &SimulatorSession::resampleCombat,
+             pybind11::arg("seeds"), pybind11::arg("known_draw_top_unique_id") = -1)
+#ifdef SPIRE_AI_SESSION_SEARCH
+        .def("enable_public_session", &SimulatorSession::enablePublicSession)
+        .def("autoplay_target_scope", &SimulatorSession::autoplayTargetScope)
+        .def("public_session_status", &SimulatorSession::publicSessionStatus)
+        .def("public_session_view", &SimulatorSession::publicSessionView)
+        .def("rich_public_view", &SimulatorSession::richPublicView)
+        .def("take_public_action", &SimulatorSession::takePublicAction)
+        .def("search_session_public", &SimulatorSession::searchSessionPublic,
+             pybind11::arg("seeds"),pybind11::arg("expected"),pybind11::arg("actions"),
+             pybind11::arg("budget"),pybind11::arg("metadata"),pybind11::arg("trace")=false)
+        .def("search_session_tree", &SimulatorSession::searchSessionTree,
+             pybind11::arg("seeds"),pybind11::arg("expected"),pybind11::arg("actions"),
+             pybind11::arg("budget"),pybind11::arg("metadata"),pybind11::arg("trace")=false)
+        .def("search_session_guarded_tree", &SimulatorSession::searchSessionGuardedTree,
+             pybind11::arg("seeds"),pybind11::arg("expected"),pybind11::arg("actions"),
+             pybind11::arg("budget"),pybind11::arg("metadata"),pybind11::arg("trace")=false)
+        .def("diagnose_first_tree_override", &SimulatorSession::diagnoseFirstTreeOverride,
+             pybind11::arg("seeds"),pybind11::arg("expected"),pybind11::arg("actions"),
+             pybind11::arg("budget"),pybind11::arg("metadata"),pybind11::arg("diagnostic"))
+        .def("search_session_paired_tree", &SimulatorSession::searchSessionPairedTree,
+             pybind11::arg("seeds"),pybind11::arg("expected"),pybind11::arg("actions"),
+             pybind11::arg("budget"),pybind11::arg("metadata"),pybind11::arg("trace")=false)
+        .def("public_battle_result", &SimulatorSession::publicBattleResult)
+        .def("search_session_neural_prior", &SimulatorSession::searchSessionNeuralPrior)
+        .def("search_session_standalone_tree", &SimulatorSession::searchSessionStandaloneTree,
+             pybind11::arg("seeds"),pybind11::arg("expected"),pybind11::arg("actions"),
+             pybind11::arg("budget"),pybind11::arg("metadata"),pybind11::arg("trace")=false)
+        .def("search_session_deep_uct", &SimulatorSession::searchSessionDeepUct,
+             pybind11::arg("seeds"),pybind11::arg("expected"),pybind11::arg("actions"),
+             pybind11::arg("budget"),pybind11::arg("metadata"),pybind11::arg("trace")=false)
+        .def("search_session_score_order", &SimulatorSession::searchSessionScoreOrder,
+             pybind11::arg("seeds"),pybind11::arg("expected"),pybind11::arg("actions"),
+             pybind11::arg("budget"),pybind11::arg("metadata"),pybind11::arg("trace")=false)
+        .def("search_session_root_objective", &SimulatorSession::searchSessionRootObjective,
+             pybind11::arg("seeds"),pybind11::arg("expected"),pybind11::arg("actions"),
+             pybind11::arg("budget"),pybind11::arg("metadata"),pybind11::arg("trace")=false)
+        .def("diagnose_session_continuation", &SimulatorSession::diagnoseSessionContinuation,
+             pybind11::arg("seeds"),pybind11::arg("expected"),pybind11::arg("actions"),
+             pybind11::arg("budget"),pybind11::arg("metadata"),pybind11::arg("diagnostic"),pybind11::arg("trace")=false)
+        .def("search_session_root_recency", &SimulatorSession::searchSessionRootRecency,
+             pybind11::arg("seeds"),pybind11::arg("expected"),pybind11::arg("actions"),
+             pybind11::arg("budget"),pybind11::arg("metadata"),pybind11::arg("trace")=false)
+        .def("search_session_deep_prior", &SimulatorSession::searchSessionDeepPrior,
+             pybind11::arg("seeds"),pybind11::arg("expected"),pybind11::arg("actions"),
+             pybind11::arg("budget"),pybind11::arg("metadata"),pybind11::arg("trace")=false)
+        .def("search_session_frozen_root", &SimulatorSession::searchSessionFrozenRoot,
+             pybind11::arg("seeds"),pybind11::arg("expected"),pybind11::arg("actions"),
+             pybind11::arg("budget"),pybind11::arg("metadata"),pybind11::arg("trace")=false)
+        .def("search_session_round_tree", &SimulatorSession::searchSessionRoundTree,
+             pybind11::arg("seeds"),pybind11::arg("expected"),pybind11::arg("actions"),
+             pybind11::arg("budget"),pybind11::arg("metadata"),pybind11::arg("trace")=false)
+        .def("audit_tree_proposal", &SimulatorSession::auditTreeProposal,
+             pybind11::arg("seeds"),pybind11::arg("expected"),pybind11::arg("actions"),
+             pybind11::arg("budget"),pybind11::arg("metadata"),pybind11::arg("diagnostic"))
+#endif
+#ifdef SPIRE_AI_PUBLIC_SEARCH
+        .def("search_public", &SimulatorSession::searchPublic,
+             pybind11::arg("seeds"), pybind11::arg("known_top"), pybind11::arg("expected"),
+             pybind11::arg("actions"), pybind11::arg("budget"), pybind11::arg("metadata"), pybind11::arg("trace")=false)
+#ifdef SPIRE_AI_SEARCH_TEST_FIXTURES
+        .def_static("_test_fixture", &SimulatorSession::testSearchFixture)
+#endif
+#endif
+        .def("reset", &SimulatorSession::reset, pybind11::arg("character"), pybind11::arg("seed"), pybind11::arg("ascension"))
+        .def("get_state", &SimulatorSession::getState)
+        .def("public_run_supplement", &SimulatorSession::publicRunSupplement)
+        .def("public_shop_shelf", &SimulatorSession::publicShopShelf)
+        .def("get_observation", &SimulatorSession::getObservation)
+        .def("get_actions_text", &SimulatorSession::getActionsText)
+        .def("take_action", &SimulatorSession::takeAction, pybind11::arg("action"));
+
+#ifdef SPIRE_AI_SESSION_SEARCH
+    m.attr("public_session_abi")=spire_session::sessionVersion;
+    m.attr("public_event_offer_abi")=spire_belief::trace::eventOfferVersion;
+    m.attr("public_run_sampling_abi")=spire_run_sampling::version;
+    m.attr("public_offer_replay_abi")=spire_offer_replay::version;
+    m.attr("public_run_edge_abi")="public-run-edge-repair-v1";
+    m.attr("boundary_value_abi")="public-boundary-value-v4";
+    m.attr("root_recommendation_abi")=spire_root_recommendation::version;
+    m.attr("mapped_draw_prefix_abi")=spire_session::MappedDrawPrefixCondition::version;
+    m.attr("settled_draw_prefix_abi")=spire_session::SettledDrawPrefixCondition::settlementVersion;
+    m.attr("shuffle_prefix_probe_abi")=spire_run_sampling::ShufflePrefixProbe::version;
+    m.attr("enemy_death_history_abi")=spire_session::enemyDeathHistoryVersion;
+    m.attr("turn_shuffle_prefix_abi")=spire_run_sampling::TurnShufflePrefix::version;
+    m.attr("event_shuffle_abi")=spire_belief::trace::EventShuffle::version;
+    m.attr("conditioning_evidence_isolation_abi")="public-shuffle-evidence-isolation-v1";
+    m.attr("history_work_guard_abi")=spire_session::HistoryWorkGuard::version;
+    m.attr("deterministic_selection_abi")="exact-deterministic-ranked-selection-v1";
+    m.attr("codex_offer_abi")="public-codex-offer-routing-v1";
+    m.attr("tree_capacity_abi")="public-tree-storage-128m-v1";
+    m.attr("prior_capacity_abi")="prior-cache-slots-1m-v1";
+    m.attr("ascension_sampling_abi")="public-encounter-ascension-a0-a10-v1";
+    m.attr("allocation_probe_abi")="public-allocation-probe-v1";
+    m.attr("terminal_proof_abi")="public-terminal-proof-v1";
+    m.attr("search_value_abi")="public-search-value-v1";
+    m.attr("value_resource_bound_abi")="public-value-resource-bound-v1";
+    m.attr("autoplay_target_prefix_abi")=spire_session::AutoplayTargetPrefix::version;
+    m.attr("public_theft_abi")=public_sampling::publicTheftVersion;
+    m.attr("public_theft_tail_abi")=spire_session::theftTailVersion;
+    m.attr("resource_utility_abi")=spire_resource_utility::version;
+    m.def("value_memo_enable",[](bool enabled){spire_value_memo::enabled=enabled;});
+    m.attr("value_memo_abi")=spire_value_memo::version;
+    m.def("prior_memo_enable",[](bool enabled){spire_neural_prior::memoEnabled=enabled;});
+    m.attr("prior_memo_abi")=spire_neural_prior::memoVersion;
+    m.attr("action_shuffle_prefix_abi")=spire_run_sampling::ObservedShufflePrefix::actionVersion;
+    m.attr("ranked_bag_sampling_abi")=spire_belief::rankedBagSampleVersion;
+    m.attr("root_policy_record_abi")=spire_root_policy::version;
+    m.attr("lazy_rule_choice_abi")="lazy-unused-rule-choice-v1";
+    m.attr("potion_replacement_abi")=spire_potion_replacement::version;
+    m.def("potion_replacement_enable", &spire_potion_replacement::setEnabled);
+    m.def("potion_replacement_enabled", []{return spire_potion_replacement::enabled;});
+    m.def("lazy_rule_choice_enable",[](bool value){spire_lazy_rule::enabled=value;});
+    m.def("root_policy_record_enable",[](bool value){spire_root_policy::enabled=value;});
+    m.attr("public_session_boundaries_abi")=spire_session::boundaryVersion;
+    m.attr("public_tree_search_abi")=spire_tree::version;
+    m.attr("public_guarded_tree_search_abi")=spire_tree::guardedVersion;
+    m.attr("public_paired_tree_search_abi")=spire_tree::pairedVersion;
+    m.attr("public_combat_objective_abi")=spire_objective::version;
+    m.attr("public_terminal_objective_abi")=spire_objective::terminalVersion;
+    m.attr("public_rule_teacher_abi")=spire_teacher::version;
+    m.attr("public_frontier_abi")=spire_frontier::version;
+    m.attr("public_value_leaf_abi")=spire_value_leaf::version;
+    m.attr("puct_exploration_abi")=spire_puct_exploration::version;
+    m.def("value_leaf_bind",[](const std::string& w,const std::string& s,const std::string& d,const std::string& id){
+        using J=nlohmann::json;spire_value_leaf::bind(J::parse(w),J::parse(s),d,id);
+    });
+    m.def("value_leaf_inspect",[](const std::string& v,const std::string& a,const std::string& r,bool full){
+        if(!spire_value_leaf::model)throw std::runtime_error("value_not_bound");
+        using J=nlohmann::json;return spire_value_leaf::model->inspect(J::parse(v),J::parse(a),J::parse(r),false,false,!full).dump();
+    });
+    m.attr("public_neural_prior_abi")=spire_neural_prior::version;
+    m.def("neural_prior_bind",[](const std::string& w,const std::string& s,const std::string& d,const std::string& id,const std::string& c){
+        using J=nlohmann::json;spire_neural_prior::bind(J::parse(w),J::parse(s),d,id,c);
+    });
+    m.def("neural_prior_inspect",[](const std::string& v,const std::string& a,const std::string& r){
+        if(!spire_neural_prior::model)throw std::runtime_error("prior_not_bound");
+        using J=nlohmann::json;auto result=spire_neural_prior::model->inspect(J::parse(v),J::parse(a),J::parse(r),false,true);
+        result["probabilities"]=spire_neural_prior::probabilities(result.at("logits").get<std::vector<float>>());return result.dump();
+    });
+    m.attr("public_cold_leaf_abi")=spire_cold::version;
+    m.def("cold_bind",[](const std::string& w,const std::string& s,const std::string& id){
+        spire_cold::bind(nlohmann::json::parse(w),nlohmann::json::parse(s),id);
+    });
+    m.def("cold_inspect",[](const std::string& v,const std::string& a){
+        using J=nlohmann::json;auto view=J::parse(v),legal=J::parse(a);
+        if(!spire_cold::actor)throw std::runtime_error("cold_actor_not_loaded");
+        const auto& model=*spire_cold::actor;auto encoded=model.encode(view,legal);
+        return J{{"encoded",encoded.json(model.schema().at("id"))},{"logits",model.forward(encoded)},
+                 {"action",model.choose(view,legal)},{"weights",spire_cold::identity}}.dump();
+    });
+    m.def("cold_rule",[](const std::string& v,const std::string& a,const std::string& m){
+        return spire_search::combatChoice(nlohmann::json::parse(v),nlohmann::json::parse(a),nlohmann::json::parse(m)).dump();
+    });
+    m.attr("public_objective_tree_search_abi")=spire_tree::objectiveVersion;
+    m.attr("public_efficient_tree_search_abi")=spire_tree::efficientVersion;
+    m.attr("public_reserved_tree_search_abi")=spire_tree::reservedVersion;
+    m.attr("public_joint_tree_search_abi")=spire_tree::jointVersion;
+    m.attr("public_focused_tree_search_abi")=spire_tree::focusedVersion;
+    m.attr("public_standalone_tree_search_abi")=spire_tree::standaloneVersion;
+    m.attr("public_deep_uct_search_abi")=spire_tree::deepQuarterVersion;
+    m.attr("public_score_order_search_abi")=spire_tree::scoreOrderVersion;
+    m.attr("public_root_objective_search_abi")=spire_tree::rootObjectiveVersion;
+    m.attr("public_deep_prior_search_abi")=spire_tree::deepPriorVersion;
+    m.attr("public_root_recency_search_abi")=spire_tree::rootRecencyVersion;
+    m.attr("public_continuation_audit_abi")=spire_search::continuationAuditVersion;
+    m.attr("public_continuation_audit_all_abi")=spire_search::continuationAuditAllVersion;
+    m.attr("public_frozen_root_search_abi")=spire_tree::frozenRootVersion;
+    m.attr("public_round_tree_search_abi")=spire_tree::roundVersion;
+    m.attr("public_paired_tree_audit_abi")="paired-continuation-audit-v1";
+    m.attr("public_tree_override_probe_abi")=spire_tree::overrideProbeVersion;
+    m.attr("public_live_history_abi")=spire_session::liveHistoryVersion;
+    m.attr("public_live_root_abi")=spire_session::liveRootVersion;
+    pybind11::class_<spire_session::LiveHistory>(m,"PublicLiveHistory")
+        .def(pybind11::init<const std::string&>())
+        .def("commit",&spire_session::LiveHistory::commit)
+        .def("probe_resolved",&spire_session::LiveHistory::probe)
+        .def("preview_resolved",&spire_session::LiveHistory::previewResolved)
+        .def("search_resolved",&spire_session::LiveHistory::searchResolved,
+             pybind11::arg("expected"),pybind11::arg("seeds"),pybind11::arg("budget"),
+             pybind11::arg("metadata"),pybind11::arg("trace")=false);
+#endif
+#ifdef SPIRE_AI_PUBLIC_SEARCH
+    m.attr("public_search_abi")=spire_search::abiVersion;
+    m.attr("public_search_rule_version")=spire_search::ruleVersion;
+    m.attr("public_search_value_version")=spire_search::valueVersion;
+    m.attr("public_search_algorithm_version")=spire_search::algorithmVersion;
+    m.attr("public_search_recipe_version")=spire_search::recipeVersion;
+    m.def("public_rule_scores", [](const std::string &view,const std::string &actions,const std::string &metadata) {
+        using spire_search::J;
+        auto v=J::parse(view),a=J::parse(actions),rules=J::parse(metadata);
+        spire_search::guard(v,rules);
+        auto out=spire_search::Rules(v,rules).scores(a);
+        return out.dump();
+    });
+    m.def("public_rule_choose", [](const std::string &view,const std::string &actions,const std::string &metadata) {
+        using spire_search::J;
+        return spire_search::ruleChoice(J::parse(view),J::parse(actions),J::parse(metadata)).dump();
+    });
+    m.def("public_rule_decision", [](const std::string &view,const std::string &actions,const std::string &metadata) {
+        using spire_search::J;
+        return spire_search::ruleDecision(J::parse(view),J::parse(actions),J::parse(metadata)).dump();
+    });
+    m.def("public_potion_choose", [](const std::string &view,const std::string &actions,const std::string &base) {
+        using spire_search::J;
+        return spire_search::potionChoice(J::parse(view),J::parse(actions),J::parse(base)).dump();
+    });
+    m.def("public_combat_value", [](const std::string &view,int outcome) {
+        return spire_search::combatValue(spire_search::J::parse(view),outcome);
+    });
+    m.def("public_ranked_choose", [](const std::string &view,const std::string &metadata,const std::string &estimates) {
+        using spire_search::J;
+        return spire_search::rankedChoice(J::parse(view),J::parse(metadata),J::parse(estimates)).dump();
+    });
+    m.def("public_search_primitives", [](){return spire_search::portedPrimitives();});
+#endif
 
     pybind11::class_<NNInterface> nnInterface(m, "NNInterface");
     nnInterface.def("getObservation", &NNInterface::getObservation, "get observation array given a GameContext")
@@ -836,5 +1690,3 @@ PYBIND11_MODULE(slaythespire, m) {
 }
 
 // os.add_dll_directory("C:\\Program Files\\mingw-w64\\x86_64-8.1.0-posix-seh-rt_v6-rev0\\mingw64\\bin")
-
-

@@ -8,6 +8,7 @@
 #include <combat/BattleContext.h>
 #include <combat/Actions.h>
 #include "combat/Player.h"
+#include "game/Game.h"
 
 using namespace sts;
 
@@ -70,7 +71,7 @@ void Player::gainBlock(BattleContext &bc, int amount) {
         return;
     }
 
-    block += amount;
+    block = std::min(999, block + amount);
 
     if (hasStatus<PS::JUGGERNAUT>()) {
         bc.addToBot(Actions::DamageRandomEnemy(getStatus<PS::JUGGERNAUT>()));
@@ -159,7 +160,7 @@ void Player::heal(int amount) {
     }
 
     if (hasRelic<RelicId::MAGIC_FLOWER>()) {
-        amount = amount * 3 / 2;
+        amount = (amount * 3 + 1) / 2;
     }
 
     bool wasBloodied = curHp <= maxHp/2;
@@ -167,7 +168,7 @@ void Player::heal(int amount) {
     curHp = std::min(static_cast<int>(maxHp), curHp + amount);
 
     if (wasBloodied && curHp > maxHp/2 && hasRelic<RelicId::RED_SKULL>()) {
-        debuff<PS::STRENGTH>(3);
+        debuff<PS::STRENGTH>(-3);
     }
 }
 
@@ -224,12 +225,9 @@ void Player::attacked(BattleContext &bc, int enemyIdx, int calculatedDamage) {
         damage = 0;
     }
 
-    if (hasStatus<PS::THORNS>()) {
-        bc.addToTop( Actions::DamageEnemy(enemyIdx, getStatus<PS::THORNS>()) );
-    }
-
-    if (hasStatus<PS::FLAME_BARRIER>()) {
-        bc.addToTop( Actions::DamageEnemy(enemyIdx, getStatus<PS::FLAME_BARRIER>()) );
+    for (const auto &power : powerInstances.ordered(PowerPhase::Attacked)) {
+        if (power.type == PS::THORNS || power.type == PS::FLAME_BARRIER)
+            bc.addToTop(Actions::DamageEnemy(enemyIdx, getStatusRuntime(power.type)));
     }
 
     if (damage > 0 && damage <=5 && hasRelic<RelicId::TORII>()) {
@@ -259,6 +257,11 @@ void Player::attacked(BattleContext &bc, int enemyIdx, int calculatedDamage) {
 }
 
 void Player::loseHp(BattleContext &bc, int amount, bool selfDamage) {
+    if (amount > 0 && hasStatus<PS::BUFFER>()) {
+        decrementStatus<PS::BUFFER>();
+        return;
+    }
+
     if (hasStatus<PS::INTANGIBLE>()) {
         amount = 1;
     }
@@ -346,30 +349,35 @@ void Player::wouldDie(BattleContext &bc) {
     bc.outcome = Outcome::PLAYER_LOSS;
 }
 
+// The supported callback families share one ordering/lifecycle registry. Keep
+// unrelated off-class legacy handlers available without interleaving enum-order
+// anchors into the acquired-order callbacks.
+static std::vector<PowerInstance> callbacksFor(const Player &player, PowerPhase phase) {
+    auto result = player.powerInstances.ordered(phase);
+    for (const auto &entry : player.statusMap)
+        if (!reviewedPowerSpec(entry.first) && player.hasStatusRuntime(entry.first))
+            result.push_back({entry.first, phase, 5, 0});
+    return result;
+}
+
 void Player::applyEndOfTurnPowers(BattleContext &bc) {
-    if (bomb1) {
-        bc.addToBot( Actions::DamageAllEnemy(bomb1) );
-    }
-    bomb1 = bomb2;
-    bomb2 = bomb3;
-    bomb3 = 0;
-
-    for (auto pair : statusMap) {
-        if (!hasStatusRuntime(pair.first)) {
-            continue;
-        }
-
+    for (const auto &power : callbacksFor(*this, PowerPhase::End)) {
+        const auto pair = std::make_pair(power.type, getStatusRuntime(power.type));
         switch (pair.first) {
+            case PS::THE_BOMB:
+                if (power.remainingTurns == 1)
+                    bc.addToBot(Actions::DamageAllEnemy(power.payload));
+                break;
+            case PS::COMBUST:
+                if (!bc.monsters.areMonstersBasicallyDead()) {
+                    bc.addToBot(Actions::PlayerLoseHp(combustHpLoss, true));
+                    bc.addToBot(Actions::DamageAllEnemy(pair.second));
+                }
+                break;
             case PS::BURST:
                 bc.addToBot(Actions::RemoveStatus<PS::BURST>());
                 break;
 
-            case PS::COMBUST:
-                if (!bc.monsters.areMonstersBasicallyDead()) {
-                    bc.addToBot(Actions::PlayerLoseHp(combustHpLoss, true)); // todo combust doesnt stack hp loss correctly
-                    bc.addToBot(Actions::DamageAllEnemy(pair.second));
-                }
-                break;
 
             case PS::CONSTRICTED:
                 bc.addToBot(Actions::DamagePlayer(pair.second));
@@ -410,7 +418,7 @@ void Player::applyEndOfTurnPowers(BattleContext &bc) {
                 break;
 
             case PS::RAGE:
-                removeStatus<PS::RAGE>();
+                bc.addToBot(Actions::RemoveStatus<PS::RAGE>());
                 break;
 
             case PS::REBOUND:
@@ -437,6 +445,7 @@ void Player::applyEndOfTurnPowers(BattleContext &bc) {
                 break;
         }
     }
+    powerInstances.tick(PowerPhase::End);
 }
 
 void Player::applyAtEndOfRoundPowers() {
@@ -461,10 +470,9 @@ void Player::applyAtEndOfRoundPowers() {
         decrementIfNotJustApplied<PS::DOUBLE_DAMAGE>();
     }
 
-    // handle elsewhere
-//    if (hasStatusInternal<PS::DRAW_REDUCTION>()) {
-//        decrementStatus<PS::DRAW_REDUCTION>();
-//    }
+    if (hasStatus<PS::DRAW_REDUCTION>()) {
+        decrementIfNotJustApplied<PS::DRAW_REDUCTION>();
+    }
 
     if (hasStatus<PS::DUPLICATION>()) {
         decrementStatus<PS::DUPLICATION>();
@@ -564,10 +572,8 @@ void Player::applyStartOfTurnRelics(BattleContext &bc) {
 
 void Player::applyStartOfTurnPowers(BattleContext &bc) {
     // ****** Player powers atStartOfTurn ******
-    for (auto pair : statusMap) {
-        if (!hasStatusRuntime(pair.first)) {
-            continue;
-        }
+    for (const auto &power : callbacksFor(*this, PowerPhase::Start)) {
+        const auto pair = std::make_pair(power.type, getStatusRuntime(power.type));
 
         switch (pair.first) {
             case PS::BATTLE_HYMN:
@@ -619,12 +625,24 @@ void Player::applyStartOfTurnPowers(BattleContext &bc) {
                 break;
 
             case PS::MAGNETISM:
-//                bc.addToBot( Actions::SetState(InputState::CREATE_RANDOM_CARD_IN_HAND_COLORLESS, pair.second) );
+                if (!bc.monsters.areMonstersBasicallyDead()) {
+                    std::vector<CardInstance> generated;
+                    for (int i = 0; i < pair.second; ++i) {
+                        generated.emplace_back(getTrulyRandomColorlessCardInCombat(bc.cardRandomRng));
+                    }
+                    // Select identities at the trigger; queued insertion precedes
+                    // normal turn draws and does not invoke draw callbacks.
+                    bc.addToBot(Actions::MakeTempCardsInHand(generated));
+                }
                 break;
 
             case PS::MAYHEM:
                 for (int i = 0; i < pair.second; i++) {
-                    bc.addToBot( Actions::PlayTopCard(bc.monsters.getRandomMonsterIdx(bc.cardRandomRng), false) ); // todo fix target
+                    // The start-of-turn wrapper queues the play behind normal draw
+                    // and already queued post-draw effects; choose its target here.
+                    bc.addToBot(Action([](BattleContext &ctx) {
+                        ctx.addToBot(Actions::PlayTopCard(ctx.monsters.getRandomMonsterIdx(ctx.cardRandomRng), false));
+                    }));
                 }
                 break;
 
@@ -673,15 +691,13 @@ void Player::applyStartOfTurnPostDrawRelics(BattleContext &bc) {
 
 void Player::applyStartOfTurnPostDrawPowers(BattleContext &bc) {
     // ****** Player Powers AtStartOfTurnPostDraw ******
-    for (auto pair :statusMap) {
-        if (!hasStatusRuntime(pair.first)) {
-            continue;
-        }
+    for (const auto &power : callbacksFor(*this, PowerPhase::PostDraw)) {
+        const auto pair = std::make_pair(power.type, getStatusRuntime(power.type));
 
         switch (pair.first) {
             case PS::BRUTALITY:
-                bc.addToBot( Actions::PlayerLoseHp(pair.second) );
                 bc.addToBot( Actions::DrawCards(pair.second) );
+                bc.addToBot( Actions::PlayerLoseHp(pair.second, true) );
                 break;
 
             case PS::DEMON_FORM:
@@ -694,7 +710,7 @@ void Player::applyStartOfTurnPostDrawPowers(BattleContext &bc) {
 
             case PS::DRAW_CARD_NEXT_TURN:
                 bc.addToBot( Actions::DrawCards(pair.second) );
-                removeStatus<PS::DRAW_CARD_NEXT_TURN>();
+                bc.addToBot(Actions::RemoveStatus<PS::DRAW_CARD_NEXT_TURN>());
                 break;
 
             case PS::NOXIOUS_FUMES:
@@ -822,12 +838,14 @@ namespace sts {
             << s << "devaFormEnergyPerTurn: " << static_cast<int>(p.devaFormEnergyPerTurn)
             << s << "echoFormCardsDoubled: " << static_cast<int>(p.echoFormCardsDoubled)
             << s << "panacheCounter: " << static_cast<int>(p.panacheCounter)
-            << s << "TheBomb: { 1=" << static_cast<int>(p.bomb1)
-                << ", 2=" << static_cast<int>(p.bomb2)
-                << ", 3=" << static_cast<int>(p.bomb3)
-                << " }"
+            << s << "Ordered power instances: ";
+        for (const auto &power : p.powerInstances.ordered()) {
+            os << "[" << static_cast<int>(power.type) << ":" << power.priority
+               << ":" << power.acquired << ":" << power.remainingTurns
+               << ":" << power.payload << "] ";
+        }
 
-            << "\n\t" << "Misc: "
+        os << "\n\t" << "Misc: "
             << "" << "cardsPlayedThisTurn: " << static_cast<int>(p.cardsPlayedThisTurn)
             << s << "attacksPlayedThisTurn: " << static_cast<int>(p.attacksPlayedThisTurn)
             << s << "skillsPlayedThisTurn: " << static_cast<int>(p.skillsPlayedThisTurn);

@@ -283,6 +283,16 @@ void Monster::addBlock(int amount) {
 void Monster::die(BattleContext &bc) {
     --bc.monsters.monstersAlive;
 
+    if ((id == MonsterId::SPIRE_SHIELD || id == MonsterId::SPIRE_SPEAR) &&
+        bc.monsters.monstersAlive > 0 && bc.player.hasStatus<PS::SURROUNDED>()) {
+        // Both original death handlers turn to the survivor and enqueue power
+        // removal. Damage alone was special-cased before, leaving stale powers.
+        for (int i = 0; i < bc.monsters.monsterCount; ++i) {
+            if (i != idx && bc.monsters.arr[i].isAlive()) bc.player.lastTargetedMonster = i;
+        }
+        bc.addToBot({[](BattleContext &next) { next.player.removeStatus<PS::SURROUNDED>(); }});
+    }
+
     if (id == MonsterId::AWAKENED_ONE && !miscInfo) { // is awakened one stage 1 // todo change to status
         halfDead = true;
         removeDebuffs();
@@ -360,11 +370,24 @@ void Monster::attackedUnblockedHelper(BattleContext &bc, int damage) { // todo, 
         setHasStatus<MS::CURL_UP>(false);
 
     } else if (hasStatus<MS::FLIGHT>() && damage > 0) {
-        auto flight = getStatus<MS::FLIGHT>();
-        if (flight == 1) {
-            setMove(MMID::BYRD_STUNNED);
+        // FlightPower queues ReducePower at the bottom; it must not affect
+        // later attacks already queued by the same card. Removal clears the
+        // power bit, then queues the grounded intent after the other reductions.
+        if (static_cast<float>(damage) / 2.0f < curHp) {
+            bc.addToBot({[target = idx](BattleContext &context) {
+                auto &enemy = context.monsters.arr[target];
+                if (!enemy.hasStatus<MS::FLIGHT>()) return;
+                if (enemy.getStatus<MS::FLIGHT>() > 1) {
+                    enemy.decrementStatus<MS::FLIGHT>();
+                } else if (!enemy.isDeadOrEscaped()) {
+                    enemy.removeStatus<MS::FLIGHT>();
+                    context.addToBot({[target](BattleContext &next) {
+                        auto &grounded = next.monsters.arr[target];
+                        if (!grounded.isDeadOrEscaped()) grounded.setMove(MMID::BYRD_STUNNED);
+                    }});
+                }
+            }});
         }
-        setStatus<MS::FLIGHT>(flight-1);
 
     } else if (hasStatus<MS::MALLEABLE>() || hasStatus<MS::REACTIVE>()) {
         if (hasStatus<MS::MALLEABLE>()) {

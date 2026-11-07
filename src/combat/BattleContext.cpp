@@ -5,6 +5,18 @@
 #include "combat/BattleContext.h"
 #include "game/GameContext.h"
 #include "game/Game.h"
+#include <stdexcept>
+
+#ifdef SPIRE_AI_DRAW_EVENTS
+#include "draw_belief/SimulatorHooks.h"
+#else
+#define SPIRE_DRAW_REFERENCE(...) 0
+#define SPIRE_DRAW_TRACK(...) 0
+#define SPIRE_DRAW_FORGET(...)
+#define SPIRE_DRAW_GROUP(...)
+#define SPIRE_DRAW_SELECTED(...)
+#define SPIRE_DRAW_PRELUDE(...)
+#endif
 
 using namespace sts;
 
@@ -19,6 +31,7 @@ void BattleContext::init(const GameContext &gc) {
 }
 
 void BattleContext::init(const GameContext &gc, MonsterEncounter encounterToInit) {
+    publicMovedDrawTopUniqueId = -1;
     undefinedBehaviorEvoked = false;
     haveUsedDiscoveryAction = false;
     seed = gc.seed;
@@ -70,6 +83,7 @@ void BattleContext::init(const GameContext &gc, MonsterEncounter encounterToInit
 
     cards.init(gc, *this);
 
+    SPIRE_DRAW_PRELUDE(*this, gc);
     initRelics(gc);
     player.energy += player.energyPerTurn;
 
@@ -198,6 +212,7 @@ void BattleContext::initRelics(const GameContext &gc) {
             case R::PHILOSOPHERS_STONE:
                 for (int i = 0; i < monsters.monsterCount; ++i) {
                     auto &m = monsters.arr[i];
+                    if (m.id == MonsterId::INVALID) continue;
                     m.buff<MS::STRENGTH>(1);
                 }
                 p.energyPerTurn++;
@@ -294,7 +309,9 @@ void BattleContext::initRelics(const GameContext &gc) {
                 if (r.data > 0) {
                     for (int i = 0; i < monsters.monsterCount; ++i) {
                         Monster &m = monsters.arr[i];
-                        m.curHp = 1;
+                        if (m.idx != -1) {
+                            m.curHp = 1;
+                        }
                     }
                 }
                 break;
@@ -413,7 +430,7 @@ void BattleContext::initRelics(const GameContext &gc) {
                 break;
 
             case R::RED_MASK:
-                addToBot( Actions::DebuffAllEnemy<MS::WEAK>(1) );
+                addToBot( Actions::DebuffAllEnemy<MS::WEAK>(1, false) );
                 break;
 
             case R::RING_OF_THE_SNAKE:
@@ -509,6 +526,10 @@ void BattleContext::exitBattle(GameContext &g) const {
 
     if (outcome == Outcome::PLAYER_LOSS) {
         g.outcome = GameOutcome::PLAYER_LOSS;
+    } else if (outcome == Outcome::PLAYER_ESCAPED) {
+        g.info.stolenGold = 0;
+        g.screenState = ScreenState::MAP_SCREEN;
+        g.regainControlAction = nullptr;
     } else {
         // player victory
         g.regainControl();
@@ -519,6 +540,15 @@ void BattleContext::exitBattle(GameContext &g) const {
 }
 
 void BattleContext::updateRelicsOnExit(GameContext &g) const {
+    // Smoke Bomb still calls AbstractRoom.endBattle -> player.onVictory, but
+    // skips encounter rewards. Do not misclassify the escape as a killed enemy.
+    const bool survived = outcome == Outcome::PLAYER_VICTORY || outcome == Outcome::PLAYER_ESCAPED;
+    // Meat on the Bone triggers before the other victory-relic healing.
+    if (survived && g.relics.has(RelicId::MEAT_ON_THE_BONE) &&
+            g.curHp > 0 && g.curHp <= g.maxHp / 2) {
+        g.playerHeal(12);
+    }
+
     for (auto &r : g.relics.relics) {
         switch (r.id) {
             case RelicId::HAPPY_FLOWER:
@@ -567,19 +597,13 @@ void BattleContext::updateRelicsOnExit(GameContext &g) const {
                 break;
 
             case RelicId::BURNING_BLOOD:
-                if (outcome == Outcome::PLAYER_VICTORY) {
+                if (survived) {
                     g.playerHeal(6);
                 }
                 break;
 
             case RelicId::BLACK_BLOOD:
-                if (outcome == Outcome::PLAYER_VICTORY) {
-                    g.playerHeal(12);
-                }
-                break;
-
-            case RelicId::MEAT_ON_THE_BONE:
-                if (outcome == Outcome::PLAYER_VICTORY && g.curHp <= g.maxHp / 2) {
+                if (survived) {
                     g.playerHeal(12);
                 }
                 break;
@@ -699,6 +723,7 @@ void BattleContext::clearPostCombatActions() {
         }
         ++curIdx;
     }
+    actionQueue.back = placeIdx % actionQueue.getCapacity();
 }
 
 void BattleContext::cleanCardQueue() {
@@ -711,11 +736,11 @@ bool BattleContext::isCardPlayAllowed() const {
         return false;
     }
 
-    if (cards.handNormalityCount && player.cardsPlayedThisTurn >= 3) {
-        return false;
-    }
+    return isHandCardPlayAllowed();
+}
 
-    return true;
+bool BattleContext::isHandCardPlayAllowed() const {
+    return cards.handNormalityCount == 0 || player.cardsPlayedThisTurn < 3;
 }
 
 void BattleContext::executeActions() {
@@ -741,7 +766,7 @@ void BattleContext::executeActions() {
             break;
         }
 
-        if (outcome == Outcome::PLAYER_LOSS) {
+        if (outcome == Outcome::PLAYER_LOSS || outcome == Outcome::PLAYER_ESCAPED) {
             break;
         }
 
@@ -767,11 +792,10 @@ void BattleContext::executeActions() {
         if (cards.cardsInHand + cards.discardPile.size() + cards.drawPile.size() == 0) {
             bool hasDamageWithoutCards = player.hasStatus<PS::OMEGA>() ||
                     player.hasStatus<PS::THORNS>() ||
-                    player.bomb1 ||
-                    player.bomb2 ||
-                    player.bomb3;
+                    player.hasStatus<PS::MAGNETISM>() ||
+                    player.powerInstances.has(PS::THE_BOMB);
 
-            if (!hasDamageWithoutCards && monsters.arr[0].id != MonsterId::TRANSIENT) {
+            if (!hasDamageWithoutCards && potionCount == 0 && monsters.arr[0].id != MonsterId::TRANSIENT) {
                 outcome = Outcome::PLAYER_LOSS;
                 break;
             }
@@ -816,9 +840,15 @@ void BattleContext::executeActions() {
 
             if (cards.cardsInHand == 0) {
                 drawCards(1);
+                // A shuffle or on-draw effect must finish before player control.
+                if (!actionQueue.isEmpty()) {
+                    continue;
+                }
             }
         }
 
+        // A public normal decision waits for outstanding Soul movement to finish.
+        cards.settleDiscardCosts();
         setState(InputState::PLAYER_NORMAL);
         break;
     }
@@ -845,7 +875,8 @@ void BattleContext::playCardQueueItem(CardQueueItem playItem) {
     }
 
 //    bool canPlayCard = false; // not really sure what this is used for
-    const bool canUseCard = item.purgeOnUse || (item.triggerOnUse && c.canUse(*this, item.target, item.autoplay) && (!c.requiresTarget() || monsters.arr[item.target].isTargetable()));
+    const bool chokerAllowsPlay = !player.hasRelic<R::VELVET_CHOKER>() || player.cardsPlayedThisTurn < 6;
+    const bool canUseCard = isHandCardPlayAllowed() && (item.purgeOnUse || (item.triggerOnUse && chokerAllowsPlay && c.canUse(*this, item.target, item.autoplay) && (!c.requiresTarget() || monsters.arr[item.target].isTargetable())));
     if (canUseCard) { // not sure if this is correct,
 //        canPlayCard = true; // what is this for......
 
@@ -857,10 +888,21 @@ void BattleContext::playCardQueueItem(CardQueueItem playItem) {
             player.lastTargetedMonster = item.target;
         }
 
-        if (!c.requiresTarget() || monsters.arr[item.target].isTargetable()) { // this is redundant right???? -> no i think echo form abilities can queue a card with invalid target
+        if (!c.requiresTarget() || monsters.arr[item.target].isTargetable()) { // copied attack may lose its target
             useCard();
+        } else if (item.purgeOnUse && item.publicTraceSource) {
+            // Cancel only the owned public alias; no use/discard callbacks.
+            SPIRE_DRAW_FORGET(cards, item.publicTraceSource);
+            item.publicTraceSource = 0;
         }
 
+    } else if (item.autoplay && item.triggerOnUse) {
+        // GameActionManager still queues UseCardAction for a rejected autoplay.
+        // Settle its lifecycle without card effects, play callbacks or counters.
+        item.triggerOnUse = false;
+        item.exhaustOnUse |= c.doesExhaust();
+        addToBot(Actions::OnAfterCardUsed());
+        return;
     }
 
     if (!item.triggerOnUse) {
@@ -871,9 +913,15 @@ void BattleContext::playCardQueueItem(CardQueueItem playItem) {
 void BattleContext::useCard() {
     auto &item = curCardQueueItem;
     auto &c = item.card;
+    if (!item.publicTraceSource) item.publicTraceSource = SPIRE_DRAW_REFERENCE(cards, c);
 
     item.exhaustOnUse |= c.doesExhaust();
     ++player.cardsPlayedThisTurn;
+
+    // AbstractPlayer.useCard makes autoplayed X-cost cards free before use().
+    if (c.isXCost() && item.autoplay) {
+        c.freeToPlayOnce = true;
+    }
 
     switch (c.getType()) {
         case CardType::ATTACK:
@@ -1073,7 +1121,7 @@ void BattleContext::useAttackCard() {
         }
 
         case CardId::IRON_WAVE: {
-            addToBot( Actions::GainBlock(calculateCardBlock(calculateCardBlock(up  ? 7 : 5))) );
+            addToBot( Actions::GainBlock(calculateCardBlock(up ? 7 : 5)) );
             addToBot( Actions::AttackEnemy(t, calculateCardDamage(c, t, up ? 7 : 5)) );
             break;
         }
@@ -1111,7 +1159,7 @@ void BattleContext::useAttackCard() {
             addToBot( Actions::AttackEnemy(t, damage) );
 
             if (item.purgeOnUse) {
-                cards.findAndUpgradeSpecialData(c.uniqueId, up ? 8 : 5);
+                cards.findAndUpgradeSpecialData(c.uniqueId, up ? 8 : 5, item.publicTraceSource);
             }
             c.specialData += up ? 8 : 5;
 
@@ -1259,12 +1307,12 @@ void BattleContext::useSkillCard() {
             break;
 
         case CardId::CHRYSALIS:
-            addToBot( Actions::PutRandomCardsInDrawPile(CardType::SKILL, up ? 5 : 3) );
+            addToBot( Actions::PutRandomCardsInDrawPile(*this, CardType::SKILL, up ? 5 : 3) );
             break;
 
         case CardId::DARK_SHACKLES:
-            addToBot( Actions::DebuffEnemy<MS::STRENGTH>(t, up ? 15 : 9) );
-            if (monsters.arr[t].hasStatus<MS::ARTIFACT>()) {
+            addToBot( Actions::DebuffEnemy<MS::STRENGTH>(t, up ? -15 : -9) );
+            if (!monsters.arr[t].hasStatus<MS::ARTIFACT>()) {
                 addToBot( Actions::BuffEnemy<MS::SHACKLED>(t, up ? 15 : 9) );
             }
             break;
@@ -1279,7 +1327,7 @@ void BattleContext::useSkillCard() {
             break;
 
         case CardId::DISARM:
-            addToBot( Actions::DebuffEnemy<MS::STRENGTH>(t, -2, false) );
+            addToBot( Actions::DebuffEnemy<MS::STRENGTH>(t, up ? -3 : -2, false) );
             break;
 
         case CardId::DISCOVERY:
@@ -1339,16 +1387,15 @@ void BattleContext::useSkillCard() {
             break;
 
         case CardId::IMPATIENCE: {
-            bool hasAttack = false;
-            for (int i = 0; i < cards.cardsInHand; ++i) {
-                if (cards.hand[i].getType() == CardType::ATTACK) {
-                    hasAttack = false;
-                    break;
+            const int drawCount = up ? 3 : 2;
+            addToBot({[drawCount](BattleContext &bc) {
+                for (int i = 0; i < bc.cards.cardsInHand; ++i) {
+                    if (bc.cards.hand[i].getType() == CardType::ATTACK) {
+                        return;
+                    }
                 }
-            }
-            if (!hasAttack) {
-                addToBot(Actions::DrawCards(up ? 3 : 2));
-            }
+                bc.addToTop(Actions::DrawCards(drawCount));
+            }});
             break;
         }
 
@@ -1357,15 +1404,15 @@ void BattleContext::useSkillCard() {
             break;
 
         case CardId::INFERNAL_BLADE:
-            addToBot( Actions::InfernalBladeAction() );
+            addToBot( Actions::InfernalBladeAction(*this) );
             break;
 
         case CardId::INTIMIDATE:
             addToBot( Actions::DebuffAllEnemy<MS::WEAK>(up ? 2 : 1, false) ); // game justs adds one for each enemy in order
             break;
 
-        case CardId::JACK_OF_ALL_TRADES: // the game decides the random cards here and adds maketempcardtobot
-            addToBot( Actions::JackOfAllTradesAction(up) );
+        case CardId::JACK_OF_ALL_TRADES:
+            addToBot( Actions::JackOfAllTradesAction(*this, up) );
             break;
 
         case CardId::JAX:
@@ -1386,7 +1433,7 @@ void BattleContext::useSkillCard() {
             break;
 
         case CardId::METAMORPHOSIS:
-            addToBot( Actions::PutRandomCardsInDrawPile(CardType::ATTACK, up ? 5 : 3) );
+            addToBot( Actions::PutRandomCardsInDrawPile(*this, CardType::ATTACK, up ? 5 : 3) );
             break;
 
         case CardId::OFFERING:
@@ -1604,6 +1651,42 @@ void BattleContext::usePowerCard() {
 }
 
 
+void BattleContext::onUseOrderedPowers() {
+    auto &item = curCardQueueItem;
+    const auto type = item.card.getType();
+    for (const auto &power : player.powerInstances.ordered(PowerPhase::UseCard)) {
+        switch (power.type) {
+            case PS::DOUBLE_TAP:
+                if (type == CardType::ATTACK && !item.purgeOnUse) {
+                    queuePurgeCard(item.card, item.target);
+                    player.decrementStatus<PS::DOUBLE_TAP>();
+                }
+                break;
+            case PS::DUPLICATION:
+                if (!item.purgeOnUse) {
+                    queuePurgeCard(item.card, item.target);
+                    player.decrementStatus<PS::DUPLICATION>();
+                }
+                break;
+            case PS::PANACHE:
+                if (--player.panacheCounter <= 0) {
+                    player.panacheCounter = 5;
+                    addToBot(Actions::DamageAllEnemy(player.getStatus<PS::PANACHE>()));
+                }
+                break;
+            case PS::RAGE:
+                if (type == CardType::ATTACK)
+                    addToBot(Actions::GainBlock(player.getStatus<PS::RAGE>()));
+                break;
+            case PS::HEX:
+                if (type != CardType::ATTACK)
+                    addToBot(Actions::MakeTempCardInDrawPile(CardInstance(CardId::DAZED), 1, true));
+                break;
+            default: break;
+        }
+    }
+}
+
 void BattleContext::onUseAttackCard() {
     auto &item = curCardQueueItem;
     auto &c = item.card;
@@ -1617,15 +1700,7 @@ void BattleContext::onUseAttackCard() {
         addToBot(Actions::GainBlock(p.getStatus<PS::AFTER_IMAGE>()));
     }
 
-    if (!item.purgeOnUse && p.hasStatus<PS::DOUBLE_TAP>()) {
-        queuePurgeCard(c, item.target);
-        p.decrementStatus<PS::DOUBLE_TAP>();
-    }
-
-    if (!item.purgeOnUse && p.hasStatus<PS::DUPLICATION>()) {
-        queuePurgeCard(c, item.target);
-        p.decrementStatus<PS::DUPLICATION>();
-    }
+    onUseOrderedPowers();
 
     const auto echoForm = p.getStatus<PS::ECHO_FORM>();
     if (!item.purgeOnUse && echoForm) {
@@ -1634,14 +1709,6 @@ void BattleContext::onUseAttackCard() {
             ++player.echoFormCardsDoubled;
             queuePurgeCard(c, item.target);
         }
-    }
-
-    if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
-        addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
-    }
-
-    if (p.hasStatus<PS::RAGE>()) {
-        addToBot( Actions::GainBlock(p.getStatus<PS::RAGE>()) );
     }
 
     if (p.hasStatus<PS::VIGOR>()) {
@@ -1748,10 +1815,7 @@ void BattleContext::onUseSkillCard() {
         p.decrementStatus<PS::BURST>();
     }
 
-    if (!item.purgeOnUse && p.hasStatus<PS::DUPLICATION>()) {
-        queuePurgeCard(c, item.target);
-        p.decrementStatus<PS::DUPLICATION>();
-    }
+    onUseOrderedPowers();
 
     const auto echoForm = p.getStatus<PS::ECHO_FORM>();
     if (!item.purgeOnUse && echoForm) {
@@ -1760,14 +1824,6 @@ void BattleContext::onUseSkillCard() {
             ++player.echoFormCardsDoubled;
             queuePurgeCard(c, item.target);
         }
-    }
-
-    if (p.hasStatus<PS::HEX>()) {
-        addToBot( Actions::MakeTempCardInDrawPile(CardInstance(CardId::DAZED), 1, true) );
-    }
-
-    if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
-        addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
     }
 
     // todo Storm
@@ -1827,10 +1883,7 @@ void BattleContext::onUsePowerCard() {
         addToBot(Actions::GainBlock(p.getStatus<PS::AFTER_IMAGE>()));
     }
 
-    if (!item.purgeOnUse && p.hasStatus<PS::DUPLICATION>()) {
-        queuePurgeCard(c, item.target);
-        p.decrementStatus<PS::DUPLICATION>();
-    }
+    onUseOrderedPowers();
 
     const auto echoForm = p.getStatus<PS::ECHO_FORM>();
     if (!item.purgeOnUse && echoForm) {
@@ -1839,14 +1892,6 @@ void BattleContext::onUsePowerCard() {
             ++player.echoFormCardsDoubled;
             queuePurgeCard(c, item.target);
         }
-    }
-
-    if (p.hasStatus<PS::HEX>()) {
-        addToBot( Actions::MakeTempCardInDrawPile(CardInstance(CardId::DAZED), 1, true) );
-    }
-
-    if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
-        addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
     }
 
     // ********* Relics onUseCard *********
@@ -1890,10 +1935,7 @@ void BattleContext::onUseStatusOrCurseCard() {
         addToBot(Actions::GainBlock(p.getStatus<PS::AFTER_IMAGE>()));
     }
 
-    if (!item.purgeOnUse && p.hasStatus<PS::DUPLICATION>()) {
-        queuePurgeCard(c, item.target);
-        p.decrementStatus<PS::DUPLICATION>();
-    }
+    onUseOrderedPowers();
 
     const auto echoForm = p.getStatus<PS::ECHO_FORM>();
     if (!item.purgeOnUse && echoForm) {
@@ -1902,14 +1944,6 @@ void BattleContext::onUseStatusOrCurseCard() {
             ++player.echoFormCardsDoubled;
             queuePurgeCard(c, item.target);
         }
-    }
-
-    if (p.hasStatus<PS::HEX>()) {
-        addToBot( Actions::MakeTempCardInDrawPile(CardInstance(CardId::DAZED), 1, true) );
-    }
-
-    if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
-        addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
     }
 
     if (c.getType() == CardType::CURSE) {
@@ -1961,6 +1995,7 @@ void BattleContext::onAfterUseCard() {
     }
 
     if (item.purgeOnUse) {
+        SPIRE_DRAW_FORGET(cards, item.publicTraceSource);
         return;
     }
 
@@ -2061,12 +2096,9 @@ void BattleContext::callEndOfTurnActions() {
 
     // ********************* Player Powers AtEndOfTurnPreEndTurnCards *********************
 
-    if (player.hasStatus<PS::METALLICIZE>()) {
-        addToBot( Actions::GainBlock( player.getStatus<PS::METALLICIZE>()) );
-    }
-
-    if (player.hasStatus<PS::PLATED_ARMOR>()) {
-        addToBot( Actions::GainBlock(player.getStatus<PS::PLATED_ARMOR>()) );
+    for (const auto &power : player.powerInstances.ordered(PowerPhase::PreEndCards)) {
+        if (power.type == PS::METALLICIZE || power.type == PS::PLATED_ARMOR)
+            addToBot(Actions::GainBlock(player.getStatusRuntime(power.type)));
     }
 
     if (player.hasStatus<PS::LIKE_WATER>() && player.stance == Stance::CALM) {
@@ -2077,13 +2109,18 @@ void BattleContext::callEndOfTurnActions() {
         addToBot(Actions::TriggerEndOfTurnOrbsAction());
     }
 
-    // todo for cards in hand call triggerOnEndOfTurnForPlayingCard
+    // Cards register end-hand callbacks before the ordinary discard phase.
 
     for (int i = 0; i < cards.cardsInHand; ++i) {
 
         const auto &c = cards.hand[i];
 
         switch (c.id) {
+            case CardId::PRIDE:
+                // Capture stat-equivalent data now; the queued action creates
+                // a fresh identity on top, without playing or exhausting it.
+                addToBot(Actions::MakeTempCardInDrawPile(c, 1, false));
+                break;
             case CardId::BURN:
             case CardId::DECAY:
             case CardId::DOUBT:
@@ -2193,15 +2230,6 @@ void BattleContext::afterMonsterTurns() {
 
     addToBot(Actions::DrawCards(player.cardDrawPerTurn)); // in this action, an effect queue item is added to rechard energy lol
 
-    if (player.hasStatus<PS::DRAW_REDUCTION>()) {
-        if (player.wasJustApplied<PS::DRAW_REDUCTION>()) {
-            player.setJustApplied<PS::DRAW_REDUCTION>(false);
-        } else {
-            player.removeStatus<PS::DRAW_REDUCTION>();
-            ++player.cardDrawPerTurn;
-        }
-    }
-
     player.applyStartOfTurnPostDrawRelics(*this);
     player.applyStartOfTurnPostDrawPowers(*this);
 
@@ -2236,10 +2264,29 @@ void BattleContext::discardPotion(int idx) {
     --potionCount;
 }
 
+bool BattleContext::canUsePotion(int slot) const {
+    if(slot < 0 || slot >= potionCapacity || inputState != InputState::PLAYER_NORMAL ||
+            outcome != Outcome::UNDECIDED) return false;
+    const auto p = potions[slot];
+    if(p == Potion::EMPTY_POTION_SLOT || p == Potion::INVALID || p == Potion::FAIRY_POTION) return false;
+    if(p == Potion::SMOKE_BOMB && (isBossEncounter(encounter) || player.hasStatus<PS::SURROUNDED>())) return false;
+    return true;
+}
+
 void BattleContext::drinkPotion(int idx, int target) {
+    if(idx < 0 || idx >= potionCapacity || potions[idx] == Potion::INVALID ||
+            potions[idx] == Potion::EMPTY_POTION_SLOT || potions[idx] == Potion::FAIRY_POTION)
+        throw std::invalid_argument("potion cannot be manually used");
+    if(potions[idx] == Potion::SMOKE_BOMB &&
+            (isBossEncounter(encounter) || player.hasStatus<PS::SURROUNDED>()))
+        throw std::invalid_argument("Smoke Bomb cannot escape this encounter");
     const bool hasBark = player.hasRelic<R::SACRED_BARK>();
     const Potion p = potions[idx];
     discardPotion(idx);
+
+    if (player.hasRelic<R::TOY_ORNITHOPTER>()) {
+        addToBot(Actions::HealPlayer(5));
+    }
 
     // todo - dont need to add to bot because always will have nothing in actionQueue?
 
@@ -2266,7 +2313,7 @@ void BattleContext::drinkPotion(int idx, int target) {
 
 
         case Potion::BLOOD_POTION: {
-            int healAmt = static_cast<int>((static_cast<float>(player.maxHp * (hasBark ? 20 : 40)) / 100.0f));
+            const int healAmt = static_cast<int>(static_cast<float>(player.maxHp) * (hasBark ? 0.4f : 0.2f));
             addToBot(Actions::HealPlayer(healAmt));
             break;
         }
@@ -2396,7 +2443,11 @@ void BattleContext::drinkPotion(int idx, int target) {
             break;
 
         case Potion::SMOKE_BOMB:
-            // todo
+            addToBot(Action([](BattleContext &b) {
+                b.outcome = Outcome::PLAYER_ESCAPED;
+                b.actionQueue.clear();
+                b.cardQueue.clear();
+            }));
             break;
 
         case Potion::SNECKO_OIL:
@@ -2437,9 +2488,12 @@ void BattleContext::drinkPotion(int idx, int target) {
 }
 
 void BattleContext::drawCards(int count) {
-    if (count <= 0 ||
-        player.hasStatus<PS::NO_DRAW>() ||
-         cards.drawPile.size() + cards.discardPile.size() == 0 ||
+    if (count <= 0 || player.hasStatus<PS::NO_DRAW>()) {
+        return;
+    }
+    // Original DrawCardAction waits for SoulGroup before its pile/hand checks.
+    cards.settleDiscardCosts();
+    if (cards.drawPile.size() + cards.discardPile.size() == 0 ||
          cards.cardsInHand == 10 ) {
         return;
     }
@@ -2525,7 +2579,8 @@ void BattleContext::playTopCardInDrawPile(int monsterTargetIdx, bool exhausts) {
     item.exhaustOnUse = exhausts;
     item.autoplay = true;
     item.freeToPlay = true; // todo remove the autoplay boolean? added this instead
-    addToTopCard(item);
+    // PlayTopCardAction uses NewQueueCardAction with immediateCard=false.
+    addToBotCard(item);
 }
 
 void BattleContext::moveToHandHelper(CardInstance c) {
@@ -2656,10 +2711,17 @@ void BattleContext::triggerOnEndOfTurnForPlayingCards() {
 void BattleContext::triggerOnOtherCardPlayed(const CardInstance &usedCard) {
     int painCount = cards.handPainCount;
     if (usedCard.getId() == CardId::PAIN) {
-        --painCount;
+        // Only the actual played hand identity is excluded. Autoplayed Pain
+        // from another pile must still trigger every resident Pain.
+        for (int i = 0; i < cards.cardsInHand; ++i) {
+            if (cards.hand[i].getUniqueId() == usedCard.getUniqueId()) {
+                --painCount;
+                break;
+            }
+        }
     }
     for (int i = 0; i < painCount; ++i) {
-        addToTop(Actions::PlayerLoseHp(1));
+        addToTop(Actions::PlayerLoseHp(1, true));
     }
 
     const auto thousandCuts = player.getStatus<PS::THOUSAND_CUTS>();
@@ -2760,6 +2822,7 @@ int BattleContext::calculateCardBlock(int baseBlock) const {
 
 void BattleContext::queuePurgeCard(const CardInstance &c, int target) {
     CardQueueItem item;
+    item.publicTraceSource = SPIRE_DRAW_TRACK(cards, curCardQueueItem.publicTraceSource);
     item.card = c;
     item.purgeOnUse = true;
     item.target = target;
@@ -2825,12 +2888,16 @@ void BattleContext::triggerAndMoveToExhaustPile(CardInstance c) {
         addToBot(Actions::MakeTempCardInHand(id));
     }
 
-    if (player.hasStatus<PS::DARK_EMBRACE>()) {
-        addToBot(Actions::DrawCards(player.getStatus<PS::DARK_EMBRACE>()));
-    }
-
-    if (player.hasStatus<PS::FEEL_NO_PAIN>()) {
-        addToBot(Actions::GainBlock(player.getStatus<PS::FEEL_NO_PAIN>()));
+    for (const auto &power : player.powerInstances.ordered(PowerPhase::Exhaust)) {
+        switch (power.type) {
+            case PS::FEEL_NO_PAIN:
+                addToBot(Actions::GainBlock(player.getStatus<PS::FEEL_NO_PAIN>()));
+                break;
+            case PS::DARK_EMBRACE:
+                addToBot(Actions::DrawCards(player.getStatus<PS::DARK_EMBRACE>()));
+                break;
+            default: break;
+        }
     }
 
     if (c.getId() == CardId::NECRONOMICURSE) {
@@ -2984,17 +3051,39 @@ void BattleContext::chooseDualWieldCard(int handIdx) {
 }
 
 void BattleContext::chooseDiscardToHandCard(int discardIdx, bool forZeroCost) {
+    if (cards.cardsInHand >= 10) return;
     CardInstance c = cards.discardPile[discardIdx];
     cards.removeFromDiscard(discardIdx);
-    if (cardSelectInfo.cardSelectTask == CardSelectTask::LIQUID_MEMORIES_POTION) {
+    if (forZeroCost) {
         c.setCostForTurn(0);
     }
     moveToHandHelper(c);
 }
 
+void BattleContext::chooseDiscardToHandCards(const std::vector<int> &indices, bool zero) {
+    std::vector<int> ids;
+    for (int i : indices) {
+        if (i < 0 || i >= static_cast<int>(cards.discardPile.size()) ||
+                std::find(ids.begin(), ids.end(), cards.discardPile[i].uniqueId) != ids.end())
+            throw std::invalid_argument("invalid discard retrieval selection");
+        ids.push_back(cards.discardPile[i].uniqueId);
+    }
+    if (indices.size() != static_cast<std::size_t>(cardSelectInfo.pickCount))
+        throw std::invalid_argument("wrong discard retrieval selection count");
+    for (int uid : ids) {
+        auto it = std::find_if(cards.discardPile.begin(), cards.discardPile.end(),
+                              [=](const auto &c) { return c.uniqueId == uid; });
+        chooseDiscardToHandCard(static_cast<int>(it - cards.discardPile.begin()), zero);
+    }
+}
+
 void BattleContext::chooseDiscoveryCard(CardId id) {
     const auto discoveryAmount = cardSelectInfo.data0;
     CardInstance c(id);
+    // BloodForBlood.makeCopy inherits prior combat HP-loss events.
+    if (id == CardId::BLOOD_FOR_BLOOD) {
+        c.updateCost(-player.timesDamagedThisCombat);
+    }
     c.setCostForTurn(0);
 
     for (int i = 0; i < discoveryAmount; ++i) {
@@ -3026,12 +3115,30 @@ void BattleContext::chooseExhumeCard(int exhaustIdx) {
     moveToHandHelper(c);
 }
 
+void BattleContext::chooseForethoughtCards(const fixed_list<int,10> &handIdxs) {
+    std::array<bool,10> selected{};
+    for (int idx : handIdxs) {
+        if (idx < 0 || idx >= cards.cardsInHand || selected[idx]) {
+            throw std::invalid_argument("Forethought requires distinct original hand indices");
+        }
+        selected[idx] = true;
+    }
+    // Preserve selection order while adjusting for earlier removals.
+    for (int i = 0; i < handIdxs.size(); ++i) {
+        int currentIdx = handIdxs[i];
+        for (int j = 0; j < i; ++j) {
+            if (handIdxs[j] < handIdxs[i]) --currentIdx;
+        }
+        chooseForethoughtCard(currentIdx);
+    }
+}
+
 void BattleContext::chooseForethoughtCard(int handIdx) {
     if (cards.hand[handIdx].cost > 0) {
         cards.hand[handIdx].freeToPlayOnce = true;
     }
 
-    cards.insertToDrawPile(0, cards.hand[handIdx]);
+    cards.moveToDrawPileBottom(cards.hand[handIdx]);
     cards.removeFromHandAtIdx(handIdx);
 }
 
@@ -3051,14 +3158,17 @@ void BattleContext::chooseWarcryCard(int handIdx) {
 #ifdef sts_asserts
     assert(handIdx >= 0 && handIdx < cards.cardsInHand);
 #endif
+    publicMovedDrawTopUniqueId = cards.hand[handIdx].uniqueId;
     cards.moveToDrawPileTop(cards.hand[handIdx]);
     cards.removeFromHandAtIdx(handIdx);
 }
 
 void BattleContext::chooseDrawToHandCards(const int *idxs, int cardCount) {
+    SPIRE_DRAW_GROUP(cards);
     for (int i = 0; i < cardCount; ++i) {
         const auto drawIdx = idxs[i];
         auto c = cards.drawPile[drawIdx];
+        SPIRE_DRAW_SELECTED(cards, c);
         cards.removeFromDrawPileAtIdx(drawIdx);
         moveToHandHelper(c);
     }

@@ -1,5 +1,9 @@
 # sts_lightspeed
 
+This maintained fork uses **master** as its only long-lived branch. See
+[maintenance and build instructions](FORK_MAINTENANCE.md) and the
+[consolidated correction inventory](docs/consolidation-20261107.md).
+
 For tree search and simulation of the popular rogue-like deckbuilder game Slay The Spire
 
 **Features**

@@ -145,11 +145,13 @@ void CardInstance::upgrade() {
             ++specialData;
             break;
 
-        case CardId::BLOOD_FOR_BLOOD: // the game upgrades the cost to 3 if the cost is over 4 but would it ever be higher?
-            if (!isUpgraded() && cost < 4 && cost > 0) {
-                upgradeBaseCost(cost-1);
+        case CardId::BLOOD_FOR_BLOOD:
+            if (!isUpgraded()) {
+                upgradeBaseCost(cost < 4 ? int(cost)-1 : 3);
+                cost = std::max(0, int(cost));
+                upgraded = true;
             }
-            break;
+            return;
 
         case CardId::BLIND:
         case CardId::TRIP:
@@ -167,7 +169,7 @@ void CardInstance::upgrade() {
         // TODO(dmz) is this logic right?
         int newcost = getEnergyCost(id, true);
         if (getEnergyCost(id, false) != newcost) {
-            cost = costForTurn = newcost;
+            upgradeBaseCost(newcost);
         }
     }
 }
@@ -276,6 +278,11 @@ bool CardInstance::canUseOnAnyTarget(const BattleContext &bc) const {
 }
 
 bool CardInstance::canUse(const BattleContext &bc, int target, const bool inAutoplay) const {
+    // Hand canPlay restrictions apply to manual, automatic and repeat plays.
+    // The queue dispatcher checks this shared gate for purged copies too.
+    if (!bc.isHandCardPlayAllowed()) {
+        return false;
+    }
     if (this->requiresTarget() && (bc.monsters.areMonstersBasicallyDead() || !bc.monsters.arr[target].isTargetable())) {
         return false;
     }
@@ -320,7 +327,7 @@ bool CardInstance::canUse(const BattleContext &bc, int target, const bool inAuto
             break;
 
         case CardType::CURSE:
-            if (!bc.player.hasRelic<RelicId::BLUE_CANDLE>()) {
+            if (costForTurn < -1 && !bc.player.hasRelic<RelicId::BLUE_CANDLE>()) {
                 return false;
             }
             break;

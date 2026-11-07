@@ -141,8 +141,12 @@ void BattleSimulator::doSetCommand(const std::string &cmd) {
 void BattleSimulator::printPotionActions(std::ostream &os) const {
     for (int i = 0; i < bc->potionCapacity; ++i) {
         const auto p = bc->potions[i];
-        if (p == Potion::EMPTY_POTION_SLOT ||
-            p == Potion::FAIRY_POTION) {
+        if (p == Potion::EMPTY_POTION_SLOT || p == Potion::INVALID) {
+            continue;
+        }
+
+        if (!bc->canUsePotion(i)) {
+            os << "discard " << i << " (" << getPotionName(p) << ")\n";
             continue;
         }
 
@@ -168,6 +172,7 @@ void BattleSimulator::takePotionAction(const std::string &action) {
     ss >> potionIdx;
 
     if (command == "drink") {
+        if (!bc->canUsePotion(potionIdx)) throw std::invalid_argument("potion cannot be used here");
         // drink potion command
 
         const auto p = bc->potions[potionIdx];
@@ -321,9 +326,8 @@ void BattleSimulator::printCardSelectActions(std::ostream &os) const {
 
         case CardSelectTask::FORETHOUGHT: {
             if (bc->cardSelectInfo.canPickAnyNumber) {
-                // todo unsupported
-                assert(false);
-                os << "Forethought: Choose a card to put on bottom of your draw pile.\n";
+                os << "Forethought: Choose any number of cards for the draw-pile bottom. "
+                      "Use original hand indices in selection order, or none.\n";
             } else {
                 os << "Forethought: Choose card to put on bottom of your draw pile.\n";
             }
@@ -452,7 +456,7 @@ void BattleSimulator::takeCardSelectAction(const std::string &action) {
 
         case CardSelectTask::FORETHOUGHT:
             if (bc->cardSelectInfo.canPickAnyNumber) {
-
+                bc->chooseForethoughtCards(getIdxListFromString(action));
             } else {
                 bc->chooseForethoughtCard(std::stoi(action));
             }
@@ -471,7 +475,13 @@ void BattleSimulator::takeCardSelectAction(const std::string &action) {
             break;
 
         case CardSelectTask::LIQUID_MEMORIES_POTION:
-            bc->chooseDiscardToHandCard(std::stoi(action), true);
+            {
+                std::istringstream input(action);
+                std::vector<int> indices;
+                int i;
+                while (input >> i) indices.push_back(i);
+                bc->chooseDiscardToHandCards(indices, true);
+            }
             break;
 
         case CardSelectTask::MEDITATE:  // todo

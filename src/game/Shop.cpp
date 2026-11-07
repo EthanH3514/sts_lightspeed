@@ -140,6 +140,8 @@ void Shop::buyRelic(GameContext &gc, int idx) {
 }
 
 void Shop::buyPotion(GameContext &gc, int idx) {
+    // Original StorePotion.purchasePotion refuses payment if acquisition fails.
+    if (gc.hasRelic(RelicId::SOZU) || gc.potionCount >= gc.potionCapacity) return;
 //    if (gc.hasRelic(RelicId::SOZU)) { // just dont call this with sozu or without enough slots
 //        return;
 //    }
@@ -158,9 +160,9 @@ void Shop::buyCardRemove(GameContext &gc) {
     removeCost = -1;
     ++gc.shopRemoveCount;
 
-    gc.regainControlAction = [=](GameContext &g) {
+    gc.regainControlAction = [returnAction = gc.regainControlAction](GameContext &g) {
         g.screenState = ScreenState::SHOP_ROOM;
-        g.regainControlAction = gc.regainControlAction;
+        g.regainControlAction = returnAction;
     };
 
     gc.openCardSelectScreen(CardSelectScreenType::REMOVE, 1);

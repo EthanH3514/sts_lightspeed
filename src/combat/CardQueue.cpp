@@ -12,16 +12,23 @@ bool CardQueue::isEmpty() const {
 }
 
 bool CardQueue::containsCardWithId(int uniqueId) const {
-    int idx = frontIdx;
     for (int i = 0; i < size; ++i) {
-        if (frontIdx >= capacity) {
-            idx = 0;
-        }
+        const int idx = (frontIdx + i) % arr.size();
         if (arr[idx].card.getUniqueId() == uniqueId) {
             return true;
         }
     }
     return false;
+}
+
+void CardQueue::reserveOne() {
+    if (size < static_cast<int>(arr.size())) return;
+    std::vector<CardQueueItem> grown(arr.size() * 2);
+    for (int i = 0; i < size; ++i)
+        grown[i] = std::move(arr[(frontIdx + i) % arr.size()]);
+    arr.swap(grown);
+    frontIdx = 0;
+    backIdx = size;
 }
 
 void CardQueue::clear() {
@@ -31,21 +38,21 @@ void CardQueue::clear() {
 }
 
 void CardQueue::pushFront(CardQueueItem item) {
-    assert(size != arr.size());
+    reserveOne();
     --frontIdx;
     ++size;
     if (frontIdx < 0) {
-        frontIdx = capacity - 1;
+        frontIdx = arr.size() - 1;
     }
     arr.at(frontIdx) = std::move(item);
 }
 
 void CardQueue::pushBack(CardQueueItem item) {
-    assert(size != capacity);
+    reserveOne();
     arr.at(backIdx) = std::move(item);
     ++backIdx;
     ++size;
-    if (backIdx >= capacity) {
+    if (backIdx >= static_cast<int>(arr.size())) {
         backIdx = 0;
     }
 }
@@ -55,7 +62,7 @@ CardQueueItem CardQueue::popFront() {
     CardQueueItem &item = arr.at(frontIdx);
     ++frontIdx;
     --size;
-    if (frontIdx >= capacity) {
+    if (frontIdx >= static_cast<int>(arr.size())) {
         frontIdx = 0;
     }
     return item;
