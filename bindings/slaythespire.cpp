@@ -21,6 +21,7 @@
 #include "sim/PublicRunSupplement.h"
 #include "sim/PublicShop.h"
 #include "sim/PublicEventContext.h"
+#include "sim/PublicMatchAndKeep.h"
 #include "sim/search/ScumSearchAgent2.h"
 #include "sim/SimHelpers.h"
 #include "sim/PrintHelpers.h"
@@ -545,6 +546,13 @@ public:
         return spire_event_public::capture(*simulator->gc).dump();
     }
 
+    std::string publicMatchAndKeep() const {
+        ensureReady();
+        if (combatOnly) return nlohmann::json{{"version", spire_match_public::version},
+            {"available", false}}.dump();
+        return spire_match_public::capture(*simulator->gc).dump();
+    }
+
     pybind::dict getState() const {
         ensureReady();
         const auto &game = *simulator->gc;
@@ -741,6 +749,7 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("get_state", &SimulatorSession::getState)
         .def("public_run_supplement", &SimulatorSession::publicRunSupplement)
         .def("public_event_context", &SimulatorSession::publicEventContext)
+        .def("public_match_and_keep", &SimulatorSession::publicMatchAndKeep)
         .def("public_shop_shelf", &SimulatorSession::publicShopShelf)
         .def("get_observation", &SimulatorSession::getObservation)
         .def("get_actions_text", &SimulatorSession::getActionsText)
