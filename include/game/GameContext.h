@@ -150,7 +150,7 @@ namespace sts {
         sts::Card noteForYourselfCard = Card(CardId::IRON_WAVE);
 
         static constexpr bool disableColosseum = false;
-        static constexpr bool disableMatchAndKeep = true;
+        static constexpr bool disableMatchAndKeep = false;
         static constexpr bool disablePrismaticShard = true;
         bool skipBattles = false;
 
@@ -342,6 +342,7 @@ namespace sts {
         void chooseEventOption(int idx);
         void chooseSelectCardScreenOption(int idx);
         void chooseCampfireOption(int idx);
+        bool canChooseMatchAndKeepCards(int idx1, int idx2) const;
         void chooseMatchAndKeepCards(int idx1, int idx2);
         void chooseTreasureRoomOption(bool openChest);
 

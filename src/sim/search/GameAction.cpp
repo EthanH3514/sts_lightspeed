@@ -47,13 +47,7 @@ std::ostream &search::GameAction::printDesc(std::ostream &os, const GameContext 
 }
 
 bool isValidMatchAndKeepEventAction(const GameContext &gc, const search::GameAction a) {
-//    const auto &m = matchAndKeepCardMap;
-//    const int idx1 = option / m.size();
-//    int idx2 = option % m.size();
-//    if (idx2 == idx1) {
-//        idx2 = idx1+1;
-//    }
-    return true;
+    return gc.canChooseMatchAndKeepCards(a.getIdx1(), a.getIdx2());
 }
 
 bool isValidDesignerInSpireEventAction(const GameContext &gc, const search::GameAction a) {
@@ -428,7 +422,9 @@ void search::GameAction::execute(GameContext &gc) const {
 
     switch (gc.screenState) {
         case ScreenState::EVENT_SCREEN:
-            gc.chooseEventOption(getIdx1());
+            if (gc.curEvent == Event::MATCH_AND_KEEP)
+                gc.chooseMatchAndKeepCards(getIdx1(), getIdx2());
+            else gc.chooseEventOption(getIdx1());
             break;
 
         case ScreenState::REWARDS:
@@ -620,7 +616,11 @@ std::vector<search::GameAction> search::GameAction::getAllActionsInState(const s
 
         case ScreenState::EVENT_SCREEN:
             if (gc.curEvent == Event::MATCH_AND_KEEP) {
-                return {};
+                std::vector<GameAction> actions;
+                for (int i = 0; i < 12; ++i)
+                    for (int j = i + 1; j < 12; ++j)
+                        if (gc.canChooseMatchAndKeepCards(i, j)) actions.emplace_back(i, j);
+                return actions;
             } else {
                 return getAllActionsInEventState(gc);
             }

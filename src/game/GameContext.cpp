@@ -966,6 +966,7 @@ void GameContext::setupEvent() { // todo necronomicon event
         case Event::MATCH_AND_KEEP: {
             if (disableMatchAndKeep) { // additional safeguard as it should also be prevented from spawning
                 regainControl();
+                break;
             }
 
             info.toSelectCards.clear();
@@ -2462,17 +2463,27 @@ void GameContext::chooseBossRelic(int idx) {
 }
 
 
+bool GameContext::canChooseMatchAndKeepCards(int idx1, int idx2) const {
+    const auto available = [this](int idx) {
+        return idx >= 0 && idx < 12 && idx < info.toSelectCards.size() &&
+            info.toSelectCards[idx].deckIdx != 0 && info.toSelectCards[idx].card.id != CardId::INVALID;
+    };
+    return outcome == GameOutcome::UNDECIDED && screenState == ScreenState::EVENT_SCREEN &&
+        curEvent == Event::MATCH_AND_KEEP && info.eventData > 0 &&
+        idx1 != idx2 && available(idx1) && available(idx2);
+}
+
 void GameContext::chooseMatchAndKeepCards(int idx1, int idx2) {
-    if (idx1 < 0 || idx1 >= 12 || info.toSelectCards[idx1].card.id == CardId::INVALID
-        || idx2 == idx1 || idx2 < 0 || idx2 >= 12 || info.toSelectCards[idx2].card.id == CardId::INVALID
-            ) {
-        assert(false);}
+    if (!canChooseMatchAndKeepCards(idx1, idx2))
+        throw std::invalid_argument("invalid Match and Keep pair");
 
     auto &s1 = info.toSelectCards[idx1].card;
     auto &s2 = info.toSelectCards[idx2].card;
 
     if (s1.id == s2.id) {
-        deck.obtain(*this, s1, 1);
+        // The game obtains makeCopy(), not the preview's upgraded/stat-equivalent
+        // copy. Obtain callbacks (including Eggs) apply to that fresh card once.
+        deck.obtain(*this, Card(s1.id), 1);
         info.toSelectCards[idx1].deckIdx = 0;
         info.toSelectCards[idx2].deckIdx = 0;
     } else {

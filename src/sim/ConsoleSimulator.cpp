@@ -899,7 +899,7 @@ void ConsoleSimulator::printEventActions(std::ostream &os) const {
             os << "1: [Fight!]\n";
             break;
 
-        case Event::MATCH_AND_KEEP: { // Match and Keep toSelectCards will store knownCards - actualCards
+        case Event::MATCH_AND_KEEP: {
             int attemptsRemaining = gc->info.eventData;
             os << "Select two: (attempts remaining " << attemptsRemaining <<")\n";
 
@@ -908,11 +908,15 @@ void ConsoleSimulator::printEventActions(std::ostream &os) const {
                 if (c.deckIdx == 0) {
                     continue;
                 } else if (c.deckIdx == 1) {
-                    os << i << ": " << c.card.getName() << "\n";
+                    os << "Tile " << i << " = " << c.card.getName() << "\n";
                 } else {
-                    os << i << ": -Unknown- " << c.card.getName() << "\n";
+                    os << "Tile " << i << " = Unknown\n";
                 }
             }
+            for (int i = 0; i < 12; ++i)
+                for (int j = i + 1; j < 12; ++j)
+                    if (gc->canChooseMatchAndKeepCards(i, j))
+                        os << i << ' ' << j << ": [Flip] Tiles " << i << " and " << j << ".\n";
             break;
         }
 
@@ -1123,8 +1127,11 @@ void ConsoleSimulator::printEventActions(std::ostream &os) const {
 void ConsoleSimulator::takeEventAction(const std::string &action) {
 
     if (gc->curEvent == Event::MATCH_AND_KEEP) {
-        int idx1 = std::stoi(action.substr(0, action.find(' ')));
-        int idx2 = std::stoi(action.substr(action.find(' ')+1));
+        int idx1, idx2;
+        std::string extra;
+        std::istringstream input(action);
+        if (!(input >> idx1 >> idx2) || (input >> extra))
+            throw std::invalid_argument("Match and Keep requires exactly two tile indices");
         gc->chooseMatchAndKeepCards(idx1, idx2);
 
     } else {
