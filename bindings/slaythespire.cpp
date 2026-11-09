@@ -19,6 +19,7 @@
 #include "sim/PublicBombState.h"
 #include "sim/PublicMapState.h"
 #include "sim/PublicRunSupplement.h"
+#include "sim/PublicDeckSelector.h"
 #include "sim/PublicShop.h"
 #include "sim/PublicEventContext.h"
 #include "sim/PublicMatchAndKeep.h"
@@ -539,6 +540,12 @@ public:
         return spire_run_public::capture(simulator->gc->deck).dump();
     }
 
+    std::string publicDeckSelector() const {
+        ensureReady();
+        const auto& g = *simulator->gc;
+        return sts::public_deck_selector::capture(g.screenState, g.deck, g.info).dump();
+    }
+
     std::string publicEventContext() const {
         ensureReady();
         if (combatOnly) return nlohmann::json{{"version", spire_event_public::version},
@@ -748,6 +755,7 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("reset", &SimulatorSession::reset, pybind11::arg("character"), pybind11::arg("seed"), pybind11::arg("ascension"))
         .def("get_state", &SimulatorSession::getState)
         .def("public_run_supplement", &SimulatorSession::publicRunSupplement)
+        .def("public_deck_selector", &SimulatorSession::publicDeckSelector)
         .def("public_event_context", &SimulatorSession::publicEventContext)
         .def("public_match_and_keep", &SimulatorSession::publicMatchAndKeep)
         .def("public_shop_shelf", &SimulatorSession::publicShopShelf)
@@ -775,6 +783,8 @@ PYBIND11_MODULE(slaythespire, m) {
     m.attr("codex_offer_abi")="public-codex-offer-routing-v1";
     m.attr("tree_capacity_abi")="public-tree-storage-128m-v1";
     m.attr("prior_capacity_abi")="prior-cache-slots-1m-v1";
+    m.attr("observed_draw_cost_abi")="public-observed-draw-cost-event-v1";
+    m.attr("confused_prefix_abi")="public-shuffle-draw-channel-v1";
     m.attr("ascension_sampling_abi")="public-encounter-ascension-a0-a10-v1";
     m.attr("allocation_probe_abi")="public-allocation-probe-v1";
     m.attr("terminal_proof_abi")="public-terminal-proof-v1";

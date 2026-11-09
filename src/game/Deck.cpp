@@ -239,14 +239,12 @@ void Deck::remove(GameContext &gc, int idx) {
         if (c.getId() == CardId::PARASITE) {
             gc.loseMaxHp(3);
         }
-        cards.remove(idx);
-        return;
-    }
-
-    --transformableCount;
-    --cardTypeCounts[static_cast<int>(c.getType())];
-    if (c.canUpgrade()) {
-        --upgradeableCount;
+    } else {
+        --transformableCount;
+        --cardTypeCounts[static_cast<int>(c.getType())];
+        if (c.canUpgrade()) {
+            --upgradeableCount;
+        }
     }
 
     if (!anyCardBottled()) { // if no bottled cards, can do simple remove
