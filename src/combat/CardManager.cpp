@@ -564,7 +564,11 @@ void CardManager::draw(BattleContext &bc, int amount) {
 
         if (bc.player.hasStatus<PS::CONFUSED>()) {
             if (c.cost >= 0) {  // todo status and curses affected by this?
+#ifdef SPIRE_AI_DRAW_EVENTS
+                const auto newCost = static_cast<std::int8_t>(::spire_draw_costs::confusionRoll(bc,c));
+#else
                 const auto newCost = static_cast<std::int8_t>(bc.cardRandomRng.random(3));
+#endif
                 if (c.cost != newCost) {
                     c.costForTurn = newCost;
                     c.cost = newCost;
