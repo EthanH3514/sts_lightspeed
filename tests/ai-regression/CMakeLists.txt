@@ -26,13 +26,23 @@ foreach(source ${regression_sources})
     add_executable(${target} "${source}" $<TARGET_OBJECTS:sts_regression_core>)
     target_include_directories(${target} PRIVATE
         "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/json/single_include")
-    if(MINGW)
-        add_custom_command(TARGET ${target} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${regression_runtime_dlls}
-                "$<TARGET_FILE_DIR:${target}>" VERBATIM)
-    endif()
     add_test(NAME "ai.${name}" COMMAND ${target})
     set_tests_properties("ai.${name}" PROPERTIES TIMEOUT 30)
     list(APPEND regression_targets ${target})
 endforeach()
+
+if(MINGW AND regression_targets)
+    # All regression executables share the runtime directory for their configuration.
+    list(GET regression_targets 0 first_regression_target)
+    set(regression_runtime_dir "$<TARGET_FILE_DIR:${first_regression_target}>")
+    add_custom_target(ai-regression-runtime
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${regression_runtime_dir}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${regression_runtime_dlls}
+            "${regression_runtime_dir}"
+        VERBATIM)
+    foreach(target IN LISTS regression_targets)
+        add_dependencies(${target} ai-regression-runtime)
+    endforeach()
+endif()
+
 add_custom_target(ai-regressions DEPENDS ${regression_targets})

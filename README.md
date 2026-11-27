@@ -1,36 +1,36 @@
 # sts_lightspeed
 
-This maintained fork uses **master** as its only long-lived branch. See
-[maintenance and build instructions](FORK_MAINTENANCE.md) and the
-[consolidated correction inventory](docs/consolidation-20261107.md).
+This is a maintained fork of `sts_lightspeed`, a C++ simulator for *Slay the
+Spire*. It runs without the game or Steam. The `slaythespire` Python module
+exposes a simulator session for starting runs, reading visible game state,
+enumerating legal actions and advancing the game. This fork supplies the
+simulator used by Spire AI. [Spire AI](https://github.com/EthanH3514/slay_the_spire_ai)
 
-For tree search and simulation of the popular rogue-like deckbuilder game Slay The Spire
+## Build the Python module
 
-**Features**
-* c++ 17 compiled with gcc
-* Standalone
-* Designed to be 100% RNG accurate*
-* Playable in console
-* Speed: 1M random playouts in 5s with 16 threads
-* Loading from save files (loading into combat currently only supported)
-* Tree Search (best result, knowing the state of the game's rng)
+Use a C++17 compiler, CMake, Ninja and a Python installation with development
+headers. The Windows setup uses MinGW-w64 and Python 3.11.
 
-**Planned Features**
-* Tree search of possible game outcomes (not given the state of rng)
+```sh
+git clone --recurse-submodules https://github.com/EthanH3514/sts_lightspeed.git
+cd sts_lightspeed
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
 
-**Implementation Progress**
-* All enemies
-* All relics
-* All Ironclad cards
-* All colorless cards
-* Everything outside of combat / all acts
+The default build produces the Python extension. On Windows, make the
+matching MinGW runtime DLLs available when importing it. Build the console
+with `cmake --build build --target main`, or request the `legacy-test` target
+for older tools such as action replay and save-file inspection.
 
-**Getting Started**
-* The project was built with Clion2021 and the [mingw64 toolchain](https://www.msys2.org/) on Windows 10
-* The main target creates a simulator of the game that can be played in console.
-* The test target creates a program with various commands that can be run, including random simulation
-* Click the star button at the top of the repo :)
+## Scope and testing
 
-**Build tips**
-* If your build fails with an error about not-return-only `constexpr` methods, ensure your compiler supports c++17.
-* If CLion shows an error about not finding python libs when loading the cmake project, try opening CLion from the msys2 shell.
+The simulator covers Ironclad runs and exposes combat, map, reward, shop and
+event decisions. The regression suite covers specific mechanics and public
+interfaces. Game accuracy and mechanic coverage remain work in progress.
+For the regression commands and the optional Spire AI integration, see the
+[maintenance guide](FORK_MAINTENANCE.md).
+
+This fork is maintained on `master`. The correction inventory describes the
+changes consolidated into the fork. [Correction inventory](docs/consolidation-20261107.md) ·
+[MIT license](LICENSE.md)
