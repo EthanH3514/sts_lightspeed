@@ -41,21 +41,16 @@ if(SPIRE_AI_SEARCH_SOURCE_ROOT)
 endif()
 
 
-add_executable(main apps/main.cpp ${sts_lightspeed_SOURCES})
+# Build the standalone console and legacy developer tools only on request.
+add_executable(main EXCLUDE_FROM_ALL apps/main.cpp ${sts_lightspeed_SOURCES})
 target_link_directories(main PRIVATE json::nlohmann_json)
 target_include_directories(main PUBLIC include)
 target_include_directories(main PUBLIC json/include)
 
-add_executable(legacy-test apps/test.cpp ${sts_lightspeed_SOURCES})
+add_executable(legacy-test EXCLUDE_FROM_ALL apps/test.cpp ${sts_lightspeed_SOURCES})
 target_include_directories(legacy-test PUBLIC include)
 target_link_directories(legacy-test PUBLIC json::nlohmann_json)
 target_include_directories(legacy-test PUBLIC json/include)
-
-add_executable(small-test apps/small-test.cpp bindings/bindings-util.cpp ${sts_lightspeed_SOURCES})
-target_link_directories(small-test PRIVATE json::nlohmann_json)
-target_include_directories(small-test PUBLIC include)
-target_include_directories(small-test PUBLIC json/include)
-target_include_directories(small-test PUBLIC bindings)
 
 option(STS_BUILD_AI_REGRESSIONS "Build the maintained fork's scoped regression suite" OFF)
 if(STS_BUILD_AI_REGRESSIONS)
