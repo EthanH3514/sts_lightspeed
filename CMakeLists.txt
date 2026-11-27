@@ -43,14 +43,12 @@ endif()
 
 # Build the standalone console and legacy developer tools only on request.
 add_executable(main EXCLUDE_FROM_ALL apps/main.cpp ${sts_lightspeed_SOURCES})
-target_link_directories(main PRIVATE json::nlohmann_json)
+target_link_libraries(main PRIVATE nlohmann_json::nlohmann_json)
 target_include_directories(main PUBLIC include)
-target_include_directories(main PUBLIC json/include)
 
-add_executable(legacy-test EXCLUDE_FROM_ALL apps/test.cpp ${sts_lightspeed_SOURCES})
+add_executable(legacy-test EXCLUDE_FROM_ALL apps/test.cpp apps/simple-agent.cpp ${sts_lightspeed_SOURCES})
 target_include_directories(legacy-test PUBLIC include)
-target_link_directories(legacy-test PUBLIC json::nlohmann_json)
-target_include_directories(legacy-test PUBLIC json/include)
+target_link_libraries(legacy-test PRIVATE nlohmann_json::nlohmann_json)
 
 option(STS_BUILD_AI_REGRESSIONS "Build the maintained fork's scoped regression suite" OFF)
 if(STS_BUILD_AI_REGRESSIONS)
