@@ -20,7 +20,6 @@
 #include "combat/BattleContext.h"
 #include "sim/ConsoleSimulator.h"
 #include "sim/PrintHelpers.h"
-#include "sim/RandomAgent.h"
 #include "sim/search/ScumSearchAgent2.h"
 #include "sim/search/SimpleAgent.h"
 
@@ -311,14 +310,6 @@ int main(int argc, const char* argv[]) {
 
         std::ifstream jsonIfStream(jsonInPath);
         SaveFile::writeJsonToSaveFile(jsonIfStream, saveFileOutPath);
-
-    }  else if (command == "scum_searcher") {
-        const std::uint64_t startSeedLong(std::stoull(argv[2]));
-        const int playoutCount(std::stoi(argv[3]));
-
-        for (std::uint64_t seed = startSeedLong; seed < startSeedLong+playoutCount; ++seed) {
-//            playRandom4(startSeedLong);
-        }
 
     } else if (command == "mcts_save") {
         return mcts(argc, argv);
